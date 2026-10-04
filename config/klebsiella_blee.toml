@@ -1,0 +1,73 @@
+name = "Klebsiella pneumoniae BLEE+"
+species = "Klebsiella pneumoniae"
+strain_code = "Aislado Clinico BLEE+"
+gram_stain = "Gram Negativo"
+clinical_description = "Productora de Betalactamasas de Espectro Extendido (SHV-1/CTX-M). Resistente a penicilinas; MEM sensible."
+
+[kinetics]
+base_division_prob = 0.075
+fitness_cost_per_mutation = 0.10
+maintenance_cost = 2
+division_cost = 25
+min_resource_for_division = 40
+
+[genetics]
+sos_base_mutation_prob = 2.0e-7
+sos_max_induction_factor = 30.0
+sos_lethal_fraction = 0.65
+
+[[antibiotics]]
+code = "MEM"
+name = "Meropenem"
+load_ug = 10.0
+c_max_plasma = 55.0
+diffusion_coeff = 0.19
+clearance_rate = 0.0001
+hill_e_max = 0.36
+hill_coefficient = 2.0
+mic_genotypes = [0.12, 0.80, 4.00, 16.0, 64.0]
+mpc_genotypes = [1.00, 6.40, 32.0, 128.0, 512.0]
+breakpoint_s = 22.0
+breakpoint_r = 16.0
+
+[[antibiotics]]
+code = "AMP"
+name = "Ampicilina"
+load_ug = 10.0
+c_max_plasma = 14.0
+diffusion_coeff = 0.20
+clearance_rate = 0.0001
+hill_e_max = 0.35
+hill_coefficient = 2.0
+mic_genotypes = [32.0, 64.0, 128.0, 256.0, 512.0]
+mpc_genotypes = [256.0, 512.0, 1024.0, 2048.0, 4096.0]
+breakpoint_s = 14.0
+breakpoint_r = 14.0
+
+[[antibiotics]]
+code = "AMC"
+name = "Amoxicilina+Clavulanico"
+load_ug = 30.0
+c_max_plasma = 16.0
+diffusion_coeff = 0.18
+clearance_rate = 0.0001
+hill_e_max = 0.35
+hill_coefficient = 2.0
+mic_genotypes = [2.00, 8.00, 32.0, 128.0, 512.0]
+mpc_genotypes = [16.0, 64.0, 256.0, 1024.0, 4096.0]
+breakpoint_s = 19.0
+breakpoint_r = 19.0
+
+[[antibiotics]]
+code = "CIP"
+name = "Ciprofloxacino"
+load_ug = 5.0
+c_max_plasma = 3.2
+diffusion_coeff = 0.22
+clearance_rate = 0.0001
+hill_e_max = 0.38
+hill_coefficient = 2.0
+mic_genotypes = [0.50, 2.00, 8.00, 32.0, 250.0]
+mpc_genotypes = [4.00, 16.0, 64.0, 256.0, 2000.0]
+breakpoint_s = 25.0
+breakpoint_r = 22.0

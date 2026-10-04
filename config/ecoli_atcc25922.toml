@@ -1,0 +1,73 @@
+name = "Escherichia coli ATCC 25922"
+species = "Escherichia coli"
+strain_code = "ATCC 25922"
+gram_stain = "Gram Negativo"
+clinical_description = "Cepa control sensible CLSI/EUCAST. Susceptibilidad natural a aminopenicilinas y quinolonas."
+
+[kinetics]
+base_division_prob = 0.08
+fitness_cost_per_mutation = 0.08
+maintenance_cost = 1
+division_cost = 20
+min_resource_for_division = 35
+
+[genetics]
+sos_base_mutation_prob = 1.0e-7
+sos_max_induction_factor = 25.0
+sos_lethal_fraction = 0.65
+
+[[antibiotics]]
+code = "CIP"
+name = "Ciprofloxacino"
+load_ug = 5.0
+c_max_plasma = 3.2
+diffusion_coeff = 0.22
+clearance_rate = 0.0001
+hill_e_max = 0.38
+hill_coefficient = 2.0
+mic_genotypes = [0.035, 0.20, 1.50, 12.0, 140.0]
+mpc_genotypes = [0.280, 1.60, 12.0, 96.0, 1120.0]
+breakpoint_s = 25.0
+breakpoint_r = 22.0
+
+[[antibiotics]]
+code = "AMP"
+name = "Ampicilina"
+load_ug = 10.0
+c_max_plasma = 14.0
+diffusion_coeff = 0.20
+clearance_rate = 0.0001
+hill_e_max = 0.35
+hill_coefficient = 2.0
+mic_genotypes = [0.25, 1.50, 8.0, 32.0, 128.0]
+mpc_genotypes = [2.00, 12.0, 64.0, 256.0, 1024.0]
+breakpoint_s = 14.0
+breakpoint_r = 14.0
+
+[[antibiotics]]
+code = "AMC"
+name = "Amoxicilina+Clavulanico"
+load_ug = 30.0
+c_max_plasma = 16.0
+diffusion_coeff = 0.18
+clearance_rate = 0.0001
+hill_e_max = 0.35
+hill_coefficient = 2.0
+mic_genotypes = [1.00, 4.00, 16.0, 64.0, 256.0]
+mpc_genotypes = [8.00, 32.0, 128.0, 512.0, 2048.0]
+breakpoint_s = 19.0
+breakpoint_r = 19.0
+
+[[antibiotics]]
+code = "MEM"
+name = "Meropenem"
+load_ug = 10.0
+c_max_plasma = 50.0
+diffusion_coeff = 0.19
+clearance_rate = 0.0001
+hill_e_max = 0.36
+hill_coefficient = 2.0
+mic_genotypes = [0.06, 0.50, 4.00, 16.0, 64.0]
+mpc_genotypes = [0.50, 4.00, 32.0, 128.0, 512.0]
+breakpoint_s = 22.0
+breakpoint_r = 16.0

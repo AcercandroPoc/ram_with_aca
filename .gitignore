@@ -1,0 +1,8 @@
+/target
+.venv
+
+data
+plots
+
+Cargo.lock
+tests

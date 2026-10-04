@@ -1,0 +1,73 @@
+name = "Pseudomonas aeruginosa PAO1"
+species = "Pseudomonas aeruginosa"
+strain_code = "PAO1"
+gram_stain = "Gram Negativo (No fermentador)"
+clinical_description = "Impermeabilidad por OprD, bomba MexAB y AmpC. Panel clinico especifico: CAZ, TZP, CIP, MEM."
+
+[kinetics]
+base_division_prob = 0.070
+fitness_cost_per_mutation = 0.06
+maintenance_cost = 2
+division_cost = 24
+min_resource_for_division = 38
+
+[genetics]
+sos_base_mutation_prob = 1.5e-7
+sos_max_induction_factor = 25.0
+sos_lethal_fraction = 0.60
+
+[[antibiotics]]
+code = "TZP"
+name = "Piperacilina+Tazobactam"
+load_ug = 36.0
+c_max_plasma = 250.0
+diffusion_coeff = 0.18
+clearance_rate = 0.0001
+hill_e_max = 0.35
+hill_coefficient = 2.0
+mic_genotypes = [4.00, 16.0, 64.0, 256.0, 1024.0]
+mpc_genotypes = [32.0, 128.0, 512.0, 2048.0, 8192.0]
+breakpoint_s = 18.0
+breakpoint_r = 18.0
+
+[[antibiotics]]
+code = "CAZ"
+name = "Ceftazidima"
+load_ug = 10.0
+c_max_plasma = 90.0
+diffusion_coeff = 0.17
+clearance_rate = 0.0001
+hill_e_max = 0.34
+hill_coefficient = 2.0
+mic_genotypes = [2.00, 8.00, 32.0, 128.0, 512.0]
+mpc_genotypes = [16.0, 64.0, 256.0, 1024.0, 4096.0]
+breakpoint_s = 17.0
+breakpoint_r = 17.0
+
+[[antibiotics]]
+code = "CIP"
+name = "Ciprofloxacino"
+load_ug = 5.0
+c_max_plasma = 4.5
+diffusion_coeff = 0.22
+clearance_rate = 0.0001
+hill_e_max = 0.38
+hill_coefficient = 2.0
+mic_genotypes = [0.25, 1.20, 8.00, 40.0, 300.0]
+mpc_genotypes = [2.00, 9.60, 64.0, 320.0, 2400.0]
+breakpoint_s = 26.0
+breakpoint_r = 26.0
+
+[[antibiotics]]
+code = "MEM"
+name = "Meropenem"
+load_ug = 10.0
+c_max_plasma = 60.0
+diffusion_coeff = 0.19
+clearance_rate = 0.0001
+hill_e_max = 0.36
+hill_coefficient = 2.0
+mic_genotypes = [0.50, 2.00, 8.00, 32.0, 128.0]
+mpc_genotypes = [4.00, 16.0, 64.0, 256.0, 1024.0]
+breakpoint_s = 24.0
+breakpoint_r = 18.0
