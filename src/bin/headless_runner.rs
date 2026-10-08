@@ -1,23 +1,21 @@
 //! src/bin/headless_runner.rs
 //! Motor de computación científica headless de alto rendimiento (HPC con Rayon).
-//! Genera datasets CSV estructurados para validación formal y gráficos estadísticos.
+//! Genera los 4 conjuntos de datos CSV estructurados para validación formal y figuras de tesis.
 
-use std::fs::{File, create_dir_all};
+use std::fs::{create_dir_all, File};
 use std::io::{BufWriter, Write};
 
+use rayon::prelude::*;
 use rand::prelude::*;
 use rand_xoshiro::Xoshiro256PlusPlus;
-use rayon::prelude::*;
 
 use tesis_ram::analysis::ode::{ChemostatState, LevinMonodParams, PearsonTracker};
-use tesis_ram::biology::rules::{BiophysicalParams, try_colonize_empty_cell, update_living_cell};
-use tesis_ram::config::{OrganismConfig, load_organism_config};
+use tesis_ram::biology::rules::{try_colonize_empty_cell, update_living_cell, BiophysicalParams};
+use tesis_ram::config::{load_organism_config, OrganismConfig};
 use tesis_ram::core::cell::Cell;
 use tesis_ram::core::grid::{DoubleBufferGrid, Grid};
 use tesis_ram::physics::bateman::BatemanRegimen;
-use tesis_ram::physics::diffusion::{
-    DiffusionParams, step_diffusion_2d, step_diffusion_mega_plate,
-};
+use tesis_ram::physics::diffusion::{step_diffusion_2d, step_diffusion_mega_plate, DiffusionParams};
 
 const DATA_DIR: &str = "data/headless";
 
@@ -54,17 +52,12 @@ fn run_headless_quimiostato() -> Result<(), Box<dyn std::error::Error>> {
     };
     let bio_params = BiophysicalParams::default();
 
-    let mut ode_state = ChemostatState {
-        s: 0.0,
-        n_s: 400.0,
-        n_r: 0.0,
-    };
+    let mut ode_state = ChemostatState { s: 0.0, n_s: 400.0, n_r: 0.0 };
     let mut grid = DoubleBufferGrid::new(WIDTH, HEIGHT, Cell::EMPTY);
     let conc_grid = Grid::new(WIDTH, HEIGHT, 0.0);
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(42);
     let mut tracker = PearsonTracker::new();
 
-    // Inoculación confluente
     for dy in -11..=11 {
         for dx in -11..=11 {
             if dx * dx + dy * dy <= 121 {
@@ -80,7 +73,6 @@ fn run_headless_quimiostato() -> Result<(), Box<dyn std::error::Error>> {
 
     for tick in 0..total_ticks {
         let antibiotic_conc = if tick >= 1500 { 0.08 } else { 0.0 };
-
         ode_state = ode_params.rk4_step(&ode_state, antibiotic_conc, 1.0);
 
         for y in (REACTOR_CY - REACTOR_R)..(REACTOR_CY + REACTOR_R) {
@@ -99,34 +91,17 @@ fn run_headless_quimiostato() -> Result<(), Box<dyn std::error::Error>> {
 
                 let density = grid.current.chamfer_density_5_7(x, y);
                 if cell.is_alive() {
-                    let updated = update_living_cell(
-                        cell,
-                        antibiotic_conc,
-                        density,
-                        false,
-                        &bio_params,
-                        1.0,
-                        &mut rng,
-                    );
+                    let updated = update_living_cell(cell, antibiotic_conc, density, false, &bio_params, 1.0, &mut rng);
                     grid.next.set(x, y, updated);
                 } else {
                     let neighbors = grid.current.get_living_neighbors(x, y);
-                    let colonized = try_colonize_empty_cell(
-                        x,
-                        y,
-                        density,
-                        &neighbors,
-                        &conc_grid,
-                        &bio_params,
-                        &mut rng,
-                    );
+                    let colonized = try_colonize_empty_cell(x, y, density, &neighbors, &conc_grid, &bio_params, &mut rng);
                     grid.next.set(x, y, colonized);
                 }
             }
         }
         grid.swap();
 
-        // Agitación por vórtice turbulento
         if tick % 2 == 0 {
             let r_i = REACTOR_R as i32;
             for _ in 0..160 {
@@ -172,19 +147,8 @@ fn run_headless_quimiostato() -> Result<(), Box<dyn std::error::Error>> {
             writeln!(
                 writer,
                 "{},{:.0},{},{},{},{},{},{:.2},{:.2},{:.2},{:.3},{:.4},{:.2}",
-                tick,
-                ca_total,
-                counts[0],
-                counts[1],
-                counts[2],
-                counts[3],
-                counts[4],
-                ode_state.n_s,
-                ode_state.n_r,
-                ode_total,
-                antibiotic_conc,
-                r_val,
-                sq_err
+                tick, ca_total, counts[0], counts[1], counts[2], counts[3], counts[4],
+                ode_state.n_s, ode_state.n_r, ode_total, antibiotic_conc, r_val, sq_err
             )?;
         }
     }
@@ -246,13 +210,7 @@ fn run_headless_mega_plate() -> Result<(), Box<dyn std::error::Error>> {
     let total_ticks = 3000;
 
     for tick in 0..total_ticks {
-        step_diffusion_mega_plate(
-            &conc_grid.current,
-            &mut conc_grid.next,
-            &reservoirs,
-            NUM_ZONES,
-            0.01,
-        );
+        step_diffusion_mega_plate(&conc_grid.current, &mut conc_grid.next, &reservoirs, NUM_ZONES, 0.01);
         conc_grid.swap();
 
         for y in 0..H {
@@ -262,26 +220,12 @@ fn run_headless_mega_plate() -> Result<(), Box<dyn std::error::Error>> {
                 let density = cell_grid.current.chamfer_density_5_7(x, y);
 
                 if cell.is_alive() {
-                    let updated = update_living_cell(
-                        cell,
-                        local_c,
-                        density,
-                        true,
-                        &bio_params,
-                        1.0,
-                        &mut rng,
-                    );
+                    let updated = update_living_cell(cell, local_c, density, true, &bio_params, 1.0, &mut rng);
                     cell_grid.next.set(x, y, updated);
                 } else {
                     let neighbors = cell_grid.current.get_living_neighbors(x, y);
                     let colonized = try_colonize_empty_cell(
-                        x,
-                        y,
-                        density,
-                        &neighbors,
-                        &conc_grid.current,
-                        &bio_params,
-                        &mut rng,
+                        x, y, density, &neighbors, &conc_grid.current, &bio_params, &mut rng,
                     );
                     cell_grid.next.set(x, y, colonized);
                 }
@@ -326,31 +270,16 @@ fn run_headless_mega_plate() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             let mean_x: Vec<f64> = (0..5)
-                .map(|g| {
-                    if counts[g] > 0 {
-                        sum_x[g] as f64 / counts[g] as f64
-                    } else {
-                        0.0
-                    }
-                })
+                .map(|g| if counts[g] > 0 { sum_x[g] as f64 / counts[g] as f64 } else { 0.0 })
                 .collect();
 
             let zone_capacity = (zone_w * H) as f64;
             writeln!(
                 sum_writer,
                 "{},gradual,{},{:.1},{:.1},{:.1},{:.1},{:.1},{},{},{},{},{},{:.3},{:.3},{:.3},{:.3},{:.3}",
-                tick,
-                max_x,
-                mean_x[0],
-                mean_x[1],
-                mean_x[2],
-                mean_x[3],
-                mean_x[4],
-                counts[0],
-                counts[1],
-                counts[2],
-                counts[3],
-                counts[4],
+                tick, max_x,
+                mean_x[0], mean_x[1], mean_x[2], mean_x[3], mean_x[4],
+                counts[0], counts[1], counts[2], counts[3], counts[4],
                 zone_counts[0] as f64 / zone_capacity,
                 zone_counts[1] as f64 / zone_capacity,
                 zone_counts[2] as f64 / zone_capacity,
@@ -371,13 +300,12 @@ fn run_headless_mega_plate() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Simulación Headless: Barrido de Cuadrícula Monte Carlo (Rayon HPC)
+// 3. Simulación Headless: Espacio de Fases [Dosis x Pauta tau] (Auditoría Rigurosa)
 // ---------------------------------------------------------------------------
 #[derive(Clone)]
 struct GridSearchResult {
     replica_id: usize,
     doses_before_drop: usize,
-    prior_cycles: usize,
     tau_regimen: usize,
     pct_time_above_mic: f64,
     time_in_msw: usize,
@@ -386,51 +314,50 @@ struct GridSearchResult {
     outcome: &'static str,
 }
 
-// En src/bin/headless_runner.rs -> reemplazar la función run_headless_grid_search:
-
-// Reemplazar la función run_headless_grid_search en src/bin/headless_runner.rs:
-
 fn run_headless_grid_search() -> Result<(), Box<dyn std::error::Error>> {
-    println!("[3/4] Ejecutando Grid Search Monte Carlo en Paralelo (Rayon)...");
+    println!("[3/4] Ejecutando Grid Search Monte Carlo en Paralelo (Dosis x Pauta tau)...");
     let file_path = format!("{}/grid_search_adherence.csv", DATA_DIR);
 
     let config: OrganismConfig = load_organism_config("config/ecoli_atcc25922.toml")?;
-    // Seleccionamos Amoxicilina + Clavulánico
+    // Amoxicilina + Clavulánico (AMC): Fármaco estándar ambulatorio de 5 días
     let ab = &config.antibiotics[2.min(config.antibiotics.len() - 1)];
     let mic_s = ab.mic_genotypes[0];
     let mpc_s = ab.mpc_genotypes[0];
 
+    // Espacio de fases: 8 niveles de adherencia x 3 pautas posológicas x 15 réplicas
     let doses_range = vec![2usize, 4, 6, 8, 10, 12, 14, 15];
-    let cycles_range = vec![0usize, 1usize, 2usize];
-    let num_replicas = 15usize; // 15 réplicas para mayor resolución estocástica
+    let tau_range = vec![480usize, 720usize, 1440usize]; // q8h, q12h, q24h
+    let num_replicas = 15usize;
 
     let mut parameter_space = Vec::new();
     for &doses in &doses_range {
-        for &cycles in &cycles_range {
+        for &tau in &tau_range {
             for rep in 0..num_replicas {
-                parameter_space.push((doses, cycles, rep));
+                parameter_space.push((doses, tau, rep));
             }
         }
     }
 
     let results: Vec<GridSearchResult> = parameter_space
         .into_par_iter()
-        .map(|(doses_before_drop, prior_cycles, rep_id)| {
+        .map(|(doses_before_drop, tau, rep_id)| {
             const TW: usize = 200;
             const TH: usize = 200;
             let mut rng = Xoshiro256PlusPlus::seed_from_u64(
-                (rep_id as u64 * 7919) + (doses_before_drop as u64 * 31) + prior_cycles as u64,
+                (rep_id as u64 * 7919) + (doses_before_drop as u64 * 31) + (tau as u64 * 17),
             );
 
-            let tau = 480usize; // q8h (15 dosis totales)
             let mut pk = BatemanRegimen::new(0.038, 0.0048, ab.c_max_plasma, tau);
 
+            // Simular abandono terapéutico: omitir las dosis posteriores
             for d in doses_before_drop..pk.total_doses {
                 if d < pk.doses_taken.len() {
                     pk.doses_taken[d] = false;
                 }
             }
 
+            // Parámetros biofísicos: Tasa basal baja en reposo (evita deriva neutral salvaje),
+            // pero fuerte inducción SOS cuando el fármaco se encuentra dentro de la MSW.
             let bio_params = BiophysicalParams {
                 base_division_prob: config.kinetics.base_division_prob,
                 fitness_cost_per_mutation: config.kinetics.fitness_cost_per_mutation,
@@ -441,13 +368,13 @@ fn run_headless_grid_search() -> Result<(), Box<dyn std::error::Error>> {
                 hill_coefficient: ab.hill_coefficient,
                 mic_by_genotype: ab.mic_genotypes,
                 mpc_by_genotype: ab.mpc_genotypes,
-                sos_base_mutation_prob: 5.0e-4, // Inducción mesoscópica en tejido bajo estrés
-                sos_max_induction_factor: config.genetics.sos_max_induction_factor,
+                sos_base_mutation_prob: 1.0e-5,          // Tasa basal en reposo
+                sos_max_induction_factor: 500.0,         // Inducción adaptativa activa bajo estrés MSW
                 sos_lethal_fraction: config.genetics.sos_lethal_fraction,
             };
 
             let diff_params = DiffusionParams {
-                diffusion_coeff: 0.50,
+                diffusion_coeff: 0.40,
                 clearance_rate: 0.00018,
                 dx: 1.0,
                 dt: 1.0,
@@ -456,10 +383,19 @@ fn run_headless_grid_search() -> Result<(), Box<dyn std::error::Error>> {
             let mut cell_grid = DoubleBufferGrid::new(TW, TH, Cell::EMPTY);
             let mut drug_grid = DoubleBufferGrid::new(TW, TH, 0.0);
 
-            let mut caps = Vec::new();
-            for r in 1..=4 {
-                for c in 1..=4 {
-                    caps.push(((c * TW / 5), (r * TH / 5)));
+            // Red microvascular de Krogh: 4x4 (16 capilares) espaciados ~45 px
+            let cols = 4;
+            let rows = 4;
+            let margin = 25.0;
+            let step_x = (TW as f64 - 2.0 * margin) / (cols as f64 - 1.0);
+            let step_y = (TH as f64 - 2.0 * margin) / (rows as f64 - 1.0);
+
+            let mut caps = Vec::with_capacity(16);
+            for r in 0..rows {
+                for c in 0..cols {
+                    let cx = (margin + c as f64 * step_x) as usize;
+                    let cy = (margin + r as f64 * step_y) as usize;
+                    caps.push((cx, cy));
                 }
             }
 
@@ -467,46 +403,30 @@ fn run_headless_grid_search() -> Result<(), Box<dyn std::error::Error>> {
             for &(cx, cy) in &caps {
                 for dy in -1..=1 {
                     for dx in -1..=1 {
-                        let x = (cx as isize + dx) as usize;
-                        let y = (cy as isize + dy) as usize;
-                        if x < TW && y < TH {
-                            is_cap_grid[y * TW + x] = true;
+                        if dx * dx + dy * dy <= 2 {
+                            let x = (cx as isize + dx) as usize;
+                            let y = (cy as isize + dy) as usize;
+                            if x < TW && y < TH {
+                                is_cap_grid[y * TW + x] = true;
+                            }
                         }
                     }
                 }
             }
 
+            // Inóculo 100% sensible virgen (g0)
             for y in 0..TH {
                 for x in 0..TW {
                     let is_cap = is_cap_grid[y * TW + x];
                     if !is_cap && rng.random_bool(0.40) {
-                        let g = match prior_cycles {
-                            0 => 0u8,
-                            1 => {
-                                if rng.random_bool(0.005) {
-                                    1u8
-                                } else {
-                                    0u8
-                                }
-                            } // Inóculo latente moderado
-                            _ => {
-                                if rng.random_bool(0.02) {
-                                    2u8
-                                } else if rng.random_bool(0.05) {
-                                    1u8
-                                } else {
-                                    0u8
-                                }
-                            }
-                        };
-                        cell_grid.current.set(x, y, Cell::new(g, 0, 100));
+                        cell_grid.current.set(x, y, Cell::new(0, 0, 100));
                     }
                 }
             }
 
             let mut time_above_mic = 0usize;
             let mut time_in_msw = 0usize;
-            let total_ticks = 5 * 1440;
+            let total_ticks = 5 * 1440; // 5 días de seguimiento
 
             for tick in 0..total_ticks {
                 let c_plasma = pk.concentration_at(tick);
@@ -521,10 +441,22 @@ fn run_headless_grid_search() -> Result<(), Box<dyn std::error::Error>> {
                 drug_grid.swap();
 
                 for &(cx, cy) in &caps {
-                    drug_grid.current.set(cx, cy, c_plasma);
+                    for dy in -1..=1 {
+                        for dx in -1..=1 {
+                            if dx * dx + dy * dy <= 2 {
+                                let x = (cx as isize + dx) as usize;
+                                let y = (cy as isize + dy) as usize;
+                                if x < TW && y < TH {
+                                    drug_grid.current.set(x, y, c_plasma);
+                                }
+                            }
+                        }
+                    }
                 }
 
                 if tick % 2 == 0 {
+                    let mut living_cells_step = 0usize;
+
                     for y in 0..TH {
                         let y_offset = y * TW;
                         for x in 0..TW {
@@ -538,35 +470,34 @@ fn run_headless_grid_search() -> Result<(), Box<dyn std::error::Error>> {
                             let density = cell_grid.current.chamfer_density_5_7(x, y);
 
                             if cell.is_alive() {
-                                let mut updated = update_living_cell(
-                                    cell,
-                                    local_c,
-                                    density,
-                                    false,
-                                    &bio_params,
-                                    2.0,
-                                    &mut rng,
-                                );
+                                living_cells_step += 1;
+                                let mut updated = update_living_cell(cell, local_c, density, false, &bio_params, 2.0, &mut rng);
                                 if updated.is_alive() {
                                     updated.add_resource(2);
                                 }
                                 cell_grid.next.set(x, y, updated);
                             } else {
                                 let neighbors = cell_grid.current.get_living_neighbors(x, y);
-                                let colonized = try_colonize_empty_cell(
-                                    x,
-                                    y,
-                                    density,
-                                    &neighbors,
-                                    &drug_grid.current,
-                                    &bio_params,
-                                    &mut rng,
-                                );
+                                let colonized = try_colonize_empty_cell(x, y, density, &neighbors, &drug_grid.current, &bio_params, &mut rng);
                                 cell_grid.next.set(x, y, colonized);
                             }
                         }
                     }
                     cell_grid.swap();
+
+                    // Early stopping si la erradicación bacteriana es total
+                    if living_cells_step == 0 && tick > 1440 {
+                        return GridSearchResult {
+                            replica_id: rep_id,
+                            doses_before_drop,
+                            tau_regimen: tau,
+                            pct_time_above_mic: (time_above_mic as f64 / total_ticks as f64) * 100.0,
+                            time_in_msw,
+                            final_pop_total: 0,
+                            final_mutant_pop: 0,
+                            outcome: "CURACION",
+                        };
+                    }
                 }
             }
 
@@ -584,13 +515,13 @@ fn run_headless_grid_search() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            // CRITERIO CLÍNICO PROPORCIONAL:
-            // - CURACION: Biomasa residual inferior a 500 celdas
-            // - FRACASO_RAM: Presencia de biomasa mutante que representa al menos el 15% de la infección
-            // - RECAIDA_SENSIBLE: Rebrote dominado por la cepa salvaje sin escape genético
+            // Clasificación clínica:
+            // 1. CURACION: erradicación exitosa (población final residual insignificante).
+            // 2. FRACASO_RAM: la infección repuntó y la subpoblación resistente domina o tiene masa crítica.
+            // 3. RECAIDA_SENSIBLE: la infección repuntó, pero por abandono precoz de bacterias sensibles no mutadas.
             let outcome = if final_total < 500 {
                 "CURACION"
-            } else if final_mutants >= 100 && (final_mutants as f64 / final_total as f64) >= 0.15 {
+            } else if final_mutants >= 50 && (final_mutants as f64 / final_total as f64) >= 0.15 {
                 "FRACASO_RAM"
             } else {
                 "RECAIDA_SENSIBLE"
@@ -599,7 +530,6 @@ fn run_headless_grid_search() -> Result<(), Box<dyn std::error::Error>> {
             GridSearchResult {
                 replica_id: rep_id,
                 doses_before_drop,
-                prior_cycles,
                 tau_regimen: tau,
                 pct_time_above_mic: (time_above_mic as f64 / total_ticks as f64) * 100.0,
                 time_in_msw,
@@ -613,22 +543,15 @@ fn run_headless_grid_search() -> Result<(), Box<dyn std::error::Error>> {
     let mut writer = BufWriter::new(File::create(&file_path)?);
     writeln!(
         writer,
-        "replica_id,doses_before_drop,prior_cycles,tau_regimen,pct_time_above_mic,time_in_msw,final_pop_total,final_mutant_pop,treatment_outcome"
+        "replica_id,doses_before_drop,tau_regimen,pct_time_above_mic,time_in_msw,final_pop_total,final_mutant_pop,treatment_outcome"
     )?;
 
     for r in results {
         writeln!(
             writer,
-            "{},{},{},{},{:.2},{},{},{},{}",
-            r.replica_id,
-            r.doses_before_drop,
-            r.prior_cycles,
-            r.tau_regimen,
-            r.pct_time_above_mic,
-            r.time_in_msw,
-            r.final_pop_total,
-            r.final_mutant_pop,
-            r.outcome
+            "{},{},{},{:.2},{},{},{},{}",
+            r.replica_id, r.doses_before_drop, r.tau_regimen,
+            r.pct_time_above_mic, r.time_in_msw, r.final_pop_total, r.final_mutant_pop, r.outcome
         )?;
     }
 
@@ -661,14 +584,8 @@ fn run_headless_traslacional() -> Result<(), Box<dyn std::error::Error>> {
     const CY: usize = 345;
     const R: usize = 205;
     const MM_PER_PX: f64 = 90.0 / (2.0 * R as f64);
-    let disk_positions = [
-        (CX, CY - 110),
-        (CX + 110, CY),
-        (CX, CY + 110),
-        (CX - 110, CY),
-    ];
+    let disk_positions = [(CX, CY - 110), (CX + 110, CY), (CX, CY + 110), (CX - 110, CY)];
 
-    // OPTIMIZACIÓN O(1): Máscara precalculada de posición sobre sensidiscos
     let mut is_on_disk_grid = vec![false; W * H];
     for &(dxp, dyp) in &disk_positions {
         for dy in -14..=14 {
@@ -690,12 +607,8 @@ fn run_headless_traslacional() -> Result<(), Box<dyn std::error::Error>> {
         let config: OrganismConfig = load_organism_config(org_file)?;
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(1000 + sample_counter as u64);
 
-        // OPTIMIZACIÓN: Precomputar parámetros biofísicos para los 4 antibióticos
-        let bio_params_list: Vec<BiophysicalParams> = config
-            .antibiotics
-            .iter()
-            .take(4)
-            .map(|ab| BiophysicalParams {
+        let bio_params_list: Vec<BiophysicalParams> = config.antibiotics.iter().take(4).map(|ab| {
+            BiophysicalParams {
                 base_division_prob: config.kinetics.base_division_prob,
                 fitness_cost_per_mutation: config.kinetics.fitness_cost_per_mutation,
                 maintenance_cost: config.kinetics.maintenance_cost,
@@ -708,24 +621,21 @@ fn run_headless_traslacional() -> Result<(), Box<dyn std::error::Error>> {
                 sos_base_mutation_prob: config.genetics.sos_base_mutation_prob,
                 sos_max_induction_factor: config.genetics.sos_max_induction_factor,
                 sos_lethal_fraction: config.genetics.sos_lethal_fraction,
-            })
-            .collect();
+            }
+        }).collect();
 
         let dist_control = [1.0, 0.0, 0.0, 0.0, 0.0];
         let dist_ram = [0.05, 0.80, 0.15, 0.0, 0.0];
 
-        let conditions = [
-            ("CONTROL_VIRGEN", dist_control),
-            ("POST_ABANDONO_RAM", dist_ram),
-        ];
+        let conditions = [("CONTROL_VIRGEN", dist_control), ("POST_ABANDONO_RAM", dist_ram)];
         let mut control_halos = Vec::new();
 
         for (cond_name, dist) in conditions {
             let mut petri_cells = DoubleBufferGrid::new(W, H, Cell::EMPTY);
-            let mut petri_drugs: Vec<DoubleBufferGrid<f64>> =
-                (0..4).map(|_| DoubleBufferGrid::new(W, H, 0.0)).collect();
+            let mut petri_drugs: Vec<DoubleBufferGrid<f64>> = (0..4)
+                .map(|_| DoubleBufferGrid::new(W, H, 0.0))
+                .collect();
 
-            // Siembra de agar
             for y in 0..H {
                 for x in 0..W {
                     let dx = x as isize - CX as isize;
@@ -746,12 +656,7 @@ fn run_headless_traslacional() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            // Cargar sensidiscos
-            for (d, &(px, py)) in disk_positions
-                .iter()
-                .enumerate()
-                .take(config.antibiotics.len().min(4))
-            {
+            for (d, &(px, py)) in disk_positions.iter().enumerate().take(config.antibiotics.len().min(4)) {
                 let ab = &config.antibiotics[d];
                 for dy in -14..=14 {
                     for dx in -14..=14 {
@@ -766,7 +671,6 @@ fn run_headless_traslacional() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            // Incubación pasiva de 1200 minutos
             for _ in 0..1200 {
                 for (d, ab) in config.antibiotics.iter().enumerate().take(4) {
                     let diff_params = DiffusionParams {
@@ -791,7 +695,6 @@ fn run_headless_traslacional() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
 
-                // Superposición biológica sin Voronoi
                 for y in (CY - R)..(CY + R) {
                     let y_offset = y * W;
                     for x in (CX - R)..(CX + R) {
@@ -827,9 +730,7 @@ fn run_headless_traslacional() -> Result<(), Box<dyn std::error::Error>> {
                                     break;
                                 }
                             }
-                            petri_cells
-                                .next
-                                .set(x, y, if killed { Cell::EMPTY } else { cell });
+                            petri_cells.next.set(x, y, if killed { Cell::EMPTY } else { cell });
                         } else {
                             let neighbors = petri_cells.current.get_living_neighbors(x, y);
                             if density < 40 && !neighbors.is_empty() {
@@ -850,11 +751,7 @@ fn run_headless_traslacional() -> Result<(), Box<dyn std::error::Error>> {
                                     }
                                 }
                                 if can_col {
-                                    petri_cells.next.set(
-                                        x,
-                                        y,
-                                        Cell::new(neighbors[0].0.genotype(), 0, 80),
-                                    );
+                                    petri_cells.next.set(x, y, Cell::new(neighbors[0].0.genotype(), 0, 80));
                                 } else {
                                     petri_cells.next.set(x, y, Cell::EMPTY);
                                 }
@@ -867,7 +764,6 @@ fn run_headless_traslacional() -> Result<(), Box<dyn std::error::Error>> {
                 petri_cells.swap();
             }
 
-            // Medición radial de halos
             for (d, ab) in config.antibiotics.iter().enumerate().take(4) {
                 let (px, py) = disk_positions[d];
                 let mut min_r = 125usize;
@@ -893,13 +789,7 @@ fn run_headless_traslacional() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 let diam_mm = (2.0 * min_r as f64 * MM_PER_PX).max(6.0);
-                let cat = if diam_mm >= ab.breakpoint_s {
-                    "S"
-                } else if diam_mm >= ab.breakpoint_r {
-                    "I"
-                } else {
-                    "R"
-                };
+                let cat = if diam_mm >= ab.breakpoint_s { "S" } else if diam_mm >= ab.breakpoint_r { "I" } else { "R" };
 
                 let delta = if cond_name == "CONTROL_VIRGEN" {
                     control_halos.push(diam_mm);
@@ -911,25 +801,15 @@ fn run_headless_traslacional() -> Result<(), Box<dyn std::error::Error>> {
                 writeln!(
                     writer,
                     "{},{},{},{},{:.1},{:.2},{:.1},{},{:.2}",
-                    sample_counter,
-                    config.species,
-                    cond_name,
-                    ab.code,
-                    ab.load_ug,
-                    diam_mm,
-                    ab.breakpoint_s,
-                    cat,
-                    delta
+                    sample_counter, config.species, cond_name, ab.code,
+                    ab.load_ug, diam_mm, ab.breakpoint_s, cat, delta
                 )?;
                 sample_counter += 1;
             }
         }
     }
 
-    println!(
-        "   -> Ensayos traslacionales completados: {} guardado.",
-        file_path
-    );
+    println!("   -> Ensayos traslacionales completados: {} guardado.", file_path);
     Ok(())
 }
 
@@ -944,9 +824,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     run_headless_grid_search()?;
     run_headless_traslacional()?;
 
-    println!(
-        "\nTodos los conjuntos de datos fueron generados exitosamente en {}/",
-        DATA_DIR
-    );
+    println!("\nTodos los conjuntos de datos fueron generados exitosamente en {}/", DATA_DIR);
     Ok(())
 }

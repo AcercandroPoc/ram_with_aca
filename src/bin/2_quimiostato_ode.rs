@@ -1,6 +1,3 @@
-//! src/bin/2_quimiostato_ode.rs
-//! Validación Cruzada Isomórfica: Autómata Celular vs RK4 (r >= 0.95)
-
 use minifb::{Key, Window, WindowOptions};
 use rand::prelude::*;
 use rand_xoshiro::Xoshiro256PlusPlus;

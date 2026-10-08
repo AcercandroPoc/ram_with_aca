@@ -1,8 +1,12 @@
 /target
 .venv
 
-data
+/data
 plots
+figures
+*.zip
+*qr*
+headless.rs
 
 Cargo.lock
 tests
