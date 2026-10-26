@@ -2,7 +2,7 @@ name = "Klebsiella pneumoniae BLEE+"
 species = "Klebsiella pneumoniae"
 strain_code = "Aislado Clinico BLEE+"
 gram_stain = "Gram Negativo"
-clinical_description = "Productora de Betalactamasas de Espectro Extendido (SHV-1/CTX-M). Resistente a penicilinas; MEM sensible."
+clinical_description = "Productora de BLEE (SHV-1/CTX-M). Click en placa alterna Panel 1ra Linea vs Rescate."
 
 [kinetics]
 base_division_prob = 0.075
@@ -12,8 +12,8 @@ division_cost = 25
 min_resource_for_division = 40
 
 [genetics]
-sos_base_mutation_prob = 2.0e-7
-sos_max_induction_factor = 30.0
+sos_base_mutation_prob = 3.0e-6
+sos_max_induction_factor = 140.0
 sos_lethal_fraction = 0.65
 
 [[antibiotics]]
@@ -23,6 +23,7 @@ load_ug = 10.0
 c_max_plasma = 55.0
 diffusion_coeff = 0.19
 clearance_rate = 0.0001
+enzymatic_deg_rate = 0.0
 hill_e_max = 0.36
 hill_coefficient = 2.0
 mic_genotypes = [0.12, 0.80, 4.00, 16.0, 64.0]
@@ -37,6 +38,7 @@ load_ug = 10.0
 c_max_plasma = 14.0
 diffusion_coeff = 0.20
 clearance_rate = 0.0001
+enzymatic_deg_rate = 0.0015
 hill_e_max = 0.35
 hill_coefficient = 2.0
 mic_genotypes = [32.0, 64.0, 128.0, 256.0, 512.0]
@@ -51,6 +53,7 @@ load_ug = 30.0
 c_max_plasma = 16.0
 diffusion_coeff = 0.18
 clearance_rate = 0.0001
+enzymatic_deg_rate = 0.0002
 hill_e_max = 0.35
 hill_coefficient = 2.0
 mic_genotypes = [2.00, 8.00, 32.0, 128.0, 512.0]
@@ -65,9 +68,70 @@ load_ug = 5.0
 c_max_plasma = 3.2
 diffusion_coeff = 0.22
 clearance_rate = 0.0001
+enzymatic_deg_rate = 0.0
 hill_e_max = 0.38
 hill_coefficient = 2.0
 mic_genotypes = [0.50, 2.00, 8.00, 32.0, 250.0]
 mpc_genotypes = [4.00, 16.0, 64.0, 256.0, 2000.0]
 breakpoint_s = 25.0
 breakpoint_r = 22.0
+
+[[antibiotics]]
+code = "CZA"
+name = "Caeftazidima+Avibactam"
+load_ug = 14.0
+c_max_plasma = 90.0
+diffusion_coeff = 0.21
+clearance_rate = 0.0001
+enzymatic_deg_rate = 0.0
+hill_e_max = 0.37
+hill_coefficient = 2.0
+mic_genotypes = [0.06, 0.12, 0.20, 0.35, 8.00]
+mpc_genotypes = [0.48, 0.96, 1.60, 2.80, 64.0]
+breakpoint_s = 21.0
+breakpoint_r = 21.0
+
+[[antibiotics]]
+code = "AMK"
+name = "Amikacina"
+load_ug = 30.0
+c_max_plasma = 65.0
+diffusion_coeff = 0.20
+clearance_rate = 0.0001
+enzymatic_deg_rate = 0.0
+hill_e_max = 0.40
+hill_coefficient = 2.0
+mic_genotypes = [0.50, 0.80, 1.00, 1.50, 12.0]
+mpc_genotypes = [4.00, 6.40, 8.00, 12.0, 96.0]
+breakpoint_s = 18.0
+breakpoint_r = 18.0
+
+[[antibiotics]]
+code = "TGC"
+name = "Tigeciclina"
+load_ug = 15.0
+c_max_plasma = 15.5
+diffusion_coeff = 0.20
+clearance_rate = 0.0001
+enzymatic_deg_rate = 0.0
+hill_e_max = 0.35
+hill_coefficient = 2.0
+mic_genotypes = [0.08, 0.12, 0.20, 0.30, 0.50]
+mpc_genotypes = [0.64, 0.96, 1.60, 2.40, 4.00]
+breakpoint_s = 18.0
+breakpoint_r = 18.0
+
+[[antibiotics]]
+code = "COL"
+name = "Colistina (Polimixina E)"
+load_ug = 10.0
+c_max_plasma = 6.0
+diffusion_coeff = 0.18
+clearance_rate = 0.0001
+enzymatic_deg_rate = 0.0
+hill_e_max = 0.42
+hill_coefficient = 2.5
+mic_genotypes = [0.12, 0.15, 0.20, 0.30, 0.45]
+mpc_genotypes = [0.96, 1.20, 1.60, 2.40, 3.60]
+breakpoint_s = 15.0
+breakpoint_r = 15.0

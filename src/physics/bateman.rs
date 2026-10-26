@@ -35,19 +35,47 @@ impl BatemanRegimen {
     /// Evalúa la concentración plasmática exacta en el minuto t mediante superposición lineal
     pub fn concentration_at(&self, t_minutes: usize) -> f64 {
         let mut total_c = 0.0;
-        let prefactor = (self.c_target * self.ka) / (self.ka - self.ke);
         let max_dose_idx = (t_minutes / self.tau_minutes).min(self.total_doses.saturating_sub(1));
 
         for j in 0..=max_dose_idx {
             if j < self.doses_taken.len() && self.doses_taken[j] {
                 let dose_time = j * self.tau_minutes;
                 let dt = (t_minutes - dose_time) as f64;
-                let c_pulse = prefactor * ((-self.ke * dt).exp() - (-self.ka * dt).exp());
-                total_c += c_pulse.max(0.0);
+                total_c += self.single_pulse(dt);
             }
         }
 
         total_c
+    }
+
+    #[inline]
+    pub fn t_max_single_dose(&self) -> f64 {
+        if (self.ka - self.ke).abs() < 1e-7 {
+            1.0 / self.ke.max(1e-7)
+        } else {
+            (self.ka / self.ke).ln() / (self.ka - self.ke)
+        }
+    }
+
+    #[inline]
+    fn single_pulse(&self, dt: f64) -> f64 {
+        if dt <= 0.0 {
+            return 0.0;
+        }
+        if (self.ka - self.ke).abs() < 1e-7 {
+            let k = self.ke;
+            return (self.c_target * (k * dt) * (1.0 - k * dt).exp()).max(0.0);
+        }
+
+        let t_max = self.t_max_single_dose();
+        let peak_denom = (-self.ke * t_max).exp() - (-self.ka * t_max).exp();
+        let prefactpr = if peak_denom > 1e-9 {
+            self.c_target / peak_denom
+        } else {
+            (self.c_target * self.ka) / (self.ka - self.ke)
+        };
+
+        (prefactpr * ((-self.ke * dt).exp() - (-self.ka * dt).exp())).max(0.0)
     }
 
     /// Obtiene el índice de la próxima dosis pendiente de administrar (None si terminó el tratamiento)

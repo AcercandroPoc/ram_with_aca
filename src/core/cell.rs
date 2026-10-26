@@ -1,10 +1,12 @@
 //! Representación de bajo nivel de la celda bacteriana individual.
 //! Empaquetado estricto en 16 bits para optimización de caché L1/L2.
 
+#[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cell {
-    /// 4 bits bajos: Genotipo (0..=4)
-    /// 4 bits altos: Acumulador de Estrés SOS (0..=15)
+    /// Bits 0..=2 (0x07): Genotipo de resistencia (0..=4)
+    /// Bit  3     (0x08): Flag de Persistencia Fenotípica (0 = Activa, 1 = Durmiente/Persister)
+    /// Bits 4..=7 (0xF0): Acumulador de Estrés SOS (0..=15)
     pub state: u8,
     /// Pool de recursos bioenergéticos internos (0..=255)
     pub resource: u8,
@@ -13,9 +15,13 @@ pub struct Cell {
 impl Cell {
     pub const EMPTY: Self = Cell { state: 0, resource: 0 };
 
+    const GENOTYPE_MASK: u8 = 0x07;
+    const PERSISTER_MASK: u8 = 0x08;
+    const STRESS_MASK: u8 = 0xF0;
+
     #[inline(always)]
     pub fn new(genotype: u8, stress: u8, resource: u8) -> Self {
-        let g = genotype.min(4) & 0x0F;
+        let g = genotype.min(4) & Self::GENOTYPE_MASK;
         let s = (stress.min(15) & 0x0F) << 4;
         Cell {
             state: s | g,
@@ -35,7 +41,7 @@ impl Cell {
 
     #[inline(always)]
     pub fn genotype(&self) -> u8 {
-        self.state & 0x0F
+        self.state & Self::GENOTYPE_MASK
     }
 
     #[inline(always)]
@@ -44,15 +50,29 @@ impl Cell {
     }
 
     #[inline(always)]
-    pub fn set_genotype(&mut self, g: u8) {
-        let clean_g = g.min(4) & 0x0F;
-        self.state = (self.state & 0xF0) | clean_g;
+    pub fn is_persister(&self) -> bool {
+        (self.state & Self::PERSISTER_MASK) != 0
+    }
+
+    #[inline(always)]
+    pub fn set_persister(&mut self, persister: bool) {
+        if persister {
+            self.state |= Self::PERSISTER_MASK;
+        } else {
+            self.state &= !Self::PERSISTER_MASK;
+        }
     }
 
     #[inline(always)]
     pub fn set_stress(&mut self, s: u8) {
         let clean_s = (s.min(15) & 0x0F) << 4;
-        self.state = (self.state & 0x0F) | clean_s;
+        self.state = (self.state & !Self::STRESS_MASK) | clean_s;
+    }
+
+    #[inline(always)]
+    pub fn set_genotype(&mut self, g: u8) {
+        let clean_g = g.min(4) & Self::GENOTYPE_MASK;
+        self.state = (self.state & !Self::GENOTYPE_MASK) | clean_g;
     }
 
     #[inline(always)]

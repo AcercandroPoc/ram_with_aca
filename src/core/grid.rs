@@ -2,6 +2,39 @@
 //! Implementa la métrica Chamfer 5-7-11 para erradicar anisotropías reticulares.
 
 use crate::core::cell::Cell;
+use std::ops::Deref;
+
+pub struct StackNeighbors {
+    buf: [(Cell, usize, usize); 8],
+    len: usize,
+}
+
+impl StackNeighbors {
+    #[inline(always)]
+    pub const fn new() -> Self {
+        Self {
+            buf: [(Cell::EMPTY, 0, 0); 8],
+            len: 0,
+        }
+    }
+
+    #[inline(always)]
+    pub fn push(&mut self, item: (Cell, usize, usize)) {
+        if self.len < 8 {
+            self.buf[self.len] = item;
+            self.len += 1;
+        }
+    }
+}
+
+impl Deref for StackNeighbors {
+    type Target = [(Cell, usize, usize)];
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &self.buf[..self.len]
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct Grid<T: Clone> {
@@ -16,6 +49,15 @@ impl<T: Clone> Grid<T> {
             width,
             height,
             data: vec![default_val; width * height],
+        }
+    }
+
+    #[inline]
+    pub fn fill(&mut self, value: T) {
+        for y in 0..self.height {
+            for x in 0..self.width {
+                self.set(x, y, value.clone());
+            }
         }
     }
 
@@ -94,15 +136,15 @@ impl Grid<Cell> {
         density
     }
 
-    /// Obtiene los vecinos vivos para competencia local y selección clonal.
+    /// Obtiene los vecinos vivos en la vecindad de Moore sin alocar memoria en el heap.
     #[inline]
-    pub fn get_living_neighbors(&self, x: usize, y: usize) -> Vec<(Cell, usize, usize)> {
+    pub fn get_living_neighbors(&self, x: usize, y: usize) -> StackNeighbors {
         let w = self.width as isize;
         let h = self.height as isize;
         let xi = x as isize;
         let yi = y as isize;
 
-        let mut neighbors = Vec::with_capacity(8);
+        let mut neighbors = StackNeighbors::new();
         for dy in -1..=1 {
             for dx in -1..=1 {
                 if dx == 0 && dy == 0 {

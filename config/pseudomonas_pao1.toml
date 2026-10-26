@@ -2,7 +2,7 @@ name = "Pseudomonas aeruginosa PAO1"
 species = "Pseudomonas aeruginosa"
 strain_code = "PAO1"
 gram_stain = "Gram Negativo (No fermentador)"
-clinical_description = "Impermeabilidad por OprD, bomba MexAB y AmpC. Panel clinico especifico: CAZ, TZP, CIP, MEM."
+clinical_description = "OprD, MexAB y AmpC. Click en placa alterna Panel 1ra Linea vs Rescate XDR."
 
 [kinetics]
 base_division_prob = 0.070
@@ -12,8 +12,8 @@ division_cost = 24
 min_resource_for_division = 38
 
 [genetics]
-sos_base_mutation_prob = 1.5e-7
-sos_max_induction_factor = 25.0
+sos_base_mutation_prob = 2.5e-6
+sos_max_induction_factor = 130.0
 sos_lethal_fraction = 0.60
 
 [[antibiotics]]
@@ -21,12 +21,13 @@ code = "TZP"
 name = "Piperacilina+Tazobactam"
 load_ug = 36.0
 c_max_plasma = 250.0
-diffusion_coeff = 0.18
+diffusion_coeff = 0.21
 clearance_rate = 0.0001
+enzymatic_deg_rate = 0.00005
 hill_e_max = 0.35
 hill_coefficient = 2.0
-mic_genotypes = [4.00, 16.0, 64.0, 256.0, 1024.0]
-mpc_genotypes = [32.0, 128.0, 512.0, 2048.0, 8192.0]
+mic_genotypes = [1.50, 16.0, 64.0, 256.0, 1024.0]
+mpc_genotypes = [12.0, 128.0, 512.0, 2048.0, 8192.0]
 breakpoint_s = 18.0
 breakpoint_r = 18.0
 
@@ -37,10 +38,11 @@ load_ug = 10.0
 c_max_plasma = 90.0
 diffusion_coeff = 0.17
 clearance_rate = 0.0001
+enzymatic_deg_rate = 0.00008
 hill_e_max = 0.34
 hill_coefficient = 2.0
-mic_genotypes = [2.00, 8.00, 32.0, 128.0, 512.0]
-mpc_genotypes = [16.0, 64.0, 256.0, 1024.0, 4096.0]
+mic_genotypes = [0.50, 8.00, 32.0, 128.0, 512.0]
+mpc_genotypes = [4.0, 64.0, 256.0, 1024.0, 4096.0]
 breakpoint_s = 17.0
 breakpoint_r = 17.0
 
@@ -51,10 +53,11 @@ load_ug = 5.0
 c_max_plasma = 4.5
 diffusion_coeff = 0.22
 clearance_rate = 0.0001
+enzymatic_deg_rate = 0.0
 hill_e_max = 0.38
 hill_coefficient = 2.0
-mic_genotypes = [0.25, 1.20, 8.00, 40.0, 300.0]
-mpc_genotypes = [2.00, 9.60, 64.0, 320.0, 2400.0]
+mic_genotypes = [0.06, 1.20, 8.00, 40.0, 300.0]
+mpc_genotypes = [0.48, 9.60, 64.0, 320.0, 2400.0]
 breakpoint_s = 26.0
 breakpoint_r = 26.0
 
@@ -63,11 +66,72 @@ code = "MEM"
 name = "Meropenem"
 load_ug = 10.0
 c_max_plasma = 60.0
-diffusion_coeff = 0.19
+diffusion_coeff = 0.20
 clearance_rate = 0.0001
+enzymatic_deg_rate = 0.0
 hill_e_max = 0.36
 hill_coefficient = 2.0
-mic_genotypes = [0.50, 2.00, 8.00, 32.0, 128.0]
-mpc_genotypes = [4.00, 16.0, 64.0, 256.0, 1024.0]
+mic_genotypes = [0.15, 2.00, 8.00, 32.0, 128.0]
+mpc_genotypes = [1.20, 16.0, 64.0, 256.0, 1024.0]
 breakpoint_s = 24.0
 breakpoint_r = 18.0
+
+[[antibiotics]]
+code = "CZA"
+name = "Ceftazidima+Avibactam"
+load_ug = 14.0
+c_max_plasma = 90.0
+diffusion_coeff = 0.21
+clearance_rate = 0.0001
+enzymatic_deg_rate = 0.0
+hill_e_max = 0.37
+hill_coefficient = 2.0
+mic_genotypes = [0.12, 0.20, 0.35, 0.50, 8.00]
+mpc_genotypes = [0.96, 1.60, 2.80, 4.00, 64.0]
+breakpoint_s = 17.0
+breakpoint_r = 17.0
+
+[[antibiotics]]
+code = "AMK"
+name = "Amikacina"
+load_ug = 30.0
+c_max_plasma = 65.0
+diffusion_coeff = 0.20
+clearance_rate = 0.0001
+enzymatic_deg_rate = 0.0
+hill_e_max = 0.40
+hill_coefficient = 2.0
+mic_genotypes = [0.50, 0.80, 1.00, 1.40, 12.0]
+mpc_genotypes = [4.00, 6.40, 8.00, 11.2, 96.0]
+breakpoint_s = 18.0
+breakpoint_r = 18.0
+
+[[antibiotics]]
+code = "ATM"
+name = "Aztreonam"
+load_ug = 30.0
+c_max_plasma = 100.0
+diffusion_coeff = 0.20
+clearance_rate = 0.0001
+enzymatic_deg_rate = 0.0
+hill_e_max = 0.36
+hill_coefficient = 2.0
+mic_genotypes = [0.50, 0.80, 1.00, 1.20, 16.0]
+mpc_genotypes = [4.0, 6.40, 8.00, 9.60, 128.0]
+breakpoint_s = 18.0
+breakpoint_r = 18.0
+
+[[antibiotics]]
+code = "COL"
+name = "Colistina (Polimixina E)"
+load_ug = 10.0
+c_max_plasma = 6.0
+diffusion_coeff = 0.18
+clearance_rate = 0.0001
+enzymatic_deg_rate = 0.0
+hill_e_max = 0.42
+hill_coefficient = 2.5
+mic_genotypes = [0.15, 0.15, 0.20, 0.30, 0.45]
+mpc_genotypes = [1.20, 1.20, 1.60, 2.40, 3.60]
+breakpoint_s = 15.0
+breakpoint_r = 15.0

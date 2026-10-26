@@ -68,12 +68,17 @@ pub fn update_living_cell<R: Rng + ?Sized>(
     let g = cell.genotype();
     let mic = params.mic_by_genotype[g as usize];
     let mpc = params.mpc_by_genotype[g as usize];
+    let steps = (dt.round() as u8).max(1);
 
     // Inducción SOS dentro de la Ventana de Selección de Mutantes (MSW = [CMI, MPC])
     if local_conc >= mic && local_conc < mpc {
-        cell.inc_stress();
+        for _ in 0..steps {
+            cell.inc_stress();
+        }
     } else if local_conc < mic {
-        cell.dec_stress();
+        for _ in 0..steps {
+            cell.dec_stress();
+        }
     }
 
     // Lisis bactericida cuando C >= CMI
@@ -82,15 +87,19 @@ pub fn update_living_cell<R: Rng + ?Sized>(
         return Cell::EMPTY;
     }
 
-    if is_solid_agar {
-        if density >= CROWDING_THRESHOLD_CHAMFER {
-            return cell; // Quiescencia metabólica en fase estacionaria
-        }
-        cell.add_resource(1);
+    if density >= CROWDING_THRESHOLD_CHAMFER {
         return cell;
     }
 
-    if !cell.consume_resource(params.maintenance_cost) {
+    if is_solid_agar {
+        cell.add_resource(steps);
+        return cell;
+    }
+
+    let total_maint = params.maintenance_cost.saturating_mul(steps);
+    if local_conc < mic {
+        cell.add_resource(steps);
+    } else if !cell.consume_resource(total_maint) {
         return Cell::EMPTY;
     }
 
@@ -113,25 +122,28 @@ pub fn try_colonize_empty_cell<R: Rng + ?Sized>(
 
     let target_conc = *conc_grid.get(target_x, target_y);
 
-    // Filtrar progenitores viables: deben tener energía Y no estar inhibidos por fármaco en su posición
-    let mut eligible = Vec::with_capacity(8);
+    // Filtrar progenitores viables: deben tener energía Y no estar por debajo de su CMI
+    let mut eligible = [(Cell::EMPTY, 0.0f64); 8];
+    let mut elegible_len = 0usize;
+
     for &(nb, nx, ny) in neighbors {
         if nb.resource >= params.min_resource_for_division {
             let parent_conc = *conc_grid.get(nx, ny);
             let mic_parent = params.mic_by_genotype[nb.genotype() as usize];
             // Principio CLSI/EUCAST: Si C >= CMI, la replicación está bloqueada
-            if parent_conc < mic_parent {
-                eligible.push((nb, parent_conc));
+            if parent_conc < mic_parent && elegible_len < 8 {
+                eligible[elegible_len] = (nb, parent_conc);
+                elegible_len += 1;
             }
         }
     }
 
-    if eligible.is_empty() {
+    if elegible_len == 0 {
         return Cell::EMPTY;
     }
 
     // Selección aleatoria entre progenitores no inhibidos
-    let (parent, parent_conc) = eligible[rng.random_range(0..eligible.len())];
+    let (parent, parent_conc) = eligible[rng.random_range(0..elegible_len)];
     let g_parent = parent.genotype();
     let mpc_parent = params.mpc_by_genotype[g_parent as usize];
 
@@ -149,15 +161,16 @@ pub fn try_colonize_empty_cell<R: Rng + ?Sized>(
     let p_mut = (params.sos_base_mutation_prob * induction).clamp(0.0, 1.0);
 
     let mut daughter_genotype = g_parent;
+    let mut daughter_stress = stress / 2;
 
     if rng.random_bool(p_mut) {
-        // Bloqueo estricto por MPC (Drlica, 2007):
         // Si el entorno materno ya superó la MPC, la mutagénesis viable es nula
         if parent_conc < mpc_parent {
             if rng.random_bool(params.sos_lethal_fraction) {
                 return Cell::EMPTY; // Catástrofe de error
             } else {
                 daughter_genotype = (g_parent + 1).min(4); // Salto escalonado unitario
+                daughter_stress = 0;
             }
         } else {
             return Cell::EMPTY;
@@ -170,5 +183,5 @@ pub fn try_colonize_empty_cell<R: Rng + ?Sized>(
         return Cell::EMPTY; // La dosis en el parche destino es letal para la progenie
     }
 
-    Cell::new(daughter_genotype, parent.stress() / 2, 80)
+    Cell::new(daughter_genotype, daughter_stress, 80)
 }

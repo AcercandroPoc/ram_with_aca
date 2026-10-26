@@ -37,6 +37,8 @@ pub struct AntibioticConfig {
     pub c_max_plasma: f64, // Concentración pico en sangre in vivo (ug/mL)
     pub diffusion_coeff: f64,
     pub clearance_rate: f64,
+    #[serde(default)]
+    pub enzymatic_deg_rate: f64,
     pub hill_e_max: f64,
     pub hill_coefficient: f64,
     pub mic_genotypes: [f64; 5],
