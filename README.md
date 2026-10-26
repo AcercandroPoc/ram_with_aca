@@ -171,9 +171,3 @@ ram_with_aca/
 ├── data/                    # Conjuntos de datos CSV generados (headless/ y interactive/)
 └── plots/                   # Figuras de salida listas para publicación (PDF/PNG)
 ```
-
----
-
-## Licencia
-
-Distribuido bajo la Licencia MIT. Desarrollado por **José Alejandro Salas Nuñez** (Carrera de Informática — Universidad Mayor de San Andrés, UMSA).
