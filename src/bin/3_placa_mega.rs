@@ -61,7 +61,8 @@ fn main() {
     let c_s = bio_params.mic_by_genotype[0]; // 0.035 ug/mL
 
     let mode_gradual = [0.0, 3.0 * c_s, 30.0 * c_s, 300.0 * c_s, 3000.0 * c_s];
-    let mode_intermedio = [0.0, 0.0, 30.0 * c_s, 3000.0 * c_s, 3000.0 * c_s];
+    let mode_intermedio_30 = [0.0, 0.0, 30.0 * c_s, 3000.0 * c_s, 3000.0 * c_s];
+    let mode_intermedio_300 = [0.0, 0.0, 300.0 * c_s, 3000.0 * c_s, 3000.0 * c_s];
     let mode_abrupto = [0.0, 3000.0 * c_s, 3000.0 * c_s, 3000.0 * c_s, 3000.0 * c_s];
 
     let mut current_mode_idx = 0usize;
@@ -79,10 +80,11 @@ fn main() {
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
         if window.is_key_pressed(Key::Space, minifb::KeyRepeat::No) {
-            current_mode_idx = (current_mode_idx + 1) % 3;
+            current_mode_idx = (current_mode_idx + 1) % 4;
             current_reservoirs = match current_mode_idx {
                 0 => mode_gradual,
-                1 => mode_intermedio,
+                1 => mode_intermedio_30,
+                2 => mode_intermedio_300,
                 _ => mode_abrupto,
             };
             init_simulation(&mut conc_grid, &mut cell_grid, &current_reservoirs, zone_w, &mut rng);
@@ -163,8 +165,9 @@ fn main() {
 
         let (mode_text, mode_color) = match current_mode_idx {
             0 => ("MODO 1: GRADUAL BAYM ET AL. (0x -> 3x -> 30x -> 300x -> 3000x)", 0x10B981),
-            1 => ("MODO 2: INTERMEDIO AMPLIO (0x -> 30x -> 3000x)", 0xF59E0B),
-            _ => ("MODO 3: BARRERA ABRUPTA DIRECTA (0x -> 3000x)", 0xEF4444),
+            1 => ("MODO 2: INTERMEDIO MODERADO (0x -> 30x -> 3000x)", 0xF59E0B),
+            2 => ("MODO 3: INTERMEDIO SEVERO (0x -> 300x -> 3000x)", 0xF97316),
+            _ => ("MODO 4: BARRERA ABRUPTA DIRECTA (0x -> 3000x)", 0xEF4444),
         };
         draw_text(&mut fb, WIDTH, 20, 28, mode_text, mode_color);
 
@@ -184,7 +187,7 @@ fn main() {
             gx += 110;
         }
 
-        draw_text(&mut fb, WIDTH, 20, 80, "[ESPACIO] Alternar Paisaje  [P] Pausar  [R] Reset  [+/-] Velocidad", 0x94A3B8);
+        draw_text(&mut fb, WIDTH, 20, 80, "[ESPACIO] Alternar Paisaje (1..4)  [P] Pausar  [R] Reset  [+/-] Velocidad", 0x94A3B8);
 
         // Lienzo de la Placa
         for y in 0..SIM_HEIGHT {
