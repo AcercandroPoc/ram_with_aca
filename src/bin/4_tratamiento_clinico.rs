@@ -4,13 +4,15 @@
 use minifb::{Key, Window, WindowOptions};
 use rand::prelude::*;
 use rand_xoshiro::Xoshiro256PlusPlus;
+use std::fs::{File, create_dir_all};
+use std::io::Write;
 
-use tesis_ram::biology::rules::{try_colonize_empty_cell, update_living_cell, BiophysicalParams};
-use tesis_ram::config::{load_organism_config, OrganismConfig};
+use tesis_ram::biology::rules::{BiophysicalParams, try_colonize_empty_cell, update_living_cell};
+use tesis_ram::config::{OrganismConfig, load_organism_config};
 use tesis_ram::core::cell::Cell;
 use tesis_ram::core::grid::DoubleBufferGrid;
 use tesis_ram::physics::bateman::BatemanRegimen;
-use tesis_ram::physics::diffusion::{step_diffusion_2d, DiffusionParams};
+use tesis_ram::physics::diffusion::{DiffusionParams, step_diffusion_2d_biofilm};
 use tesis_ram::visualizer::osd::{draw_rect, draw_text};
 
 const WIDTH: usize = 1000;
@@ -49,6 +51,7 @@ fn init_infection(
     cell_grid: &mut DoubleBufferGrid<Cell>,
     drug_grid: &mut DoubleBufferGrid<f64>,
     capillaries: &[CapillaryPoint],
+    initial_genotype: u8,
     rng: &mut Xoshiro256PlusPlus,
 ) {
     for y in 0..HEIGHT {
@@ -68,7 +71,9 @@ fn init_infection(
                 dx * dx + dy * dy <= 16
             });
             if !near_vessel && rng.random_bool(0.78) {
-                cell_grid.current.set(x, y, Cell::new(0, 0, 100));
+                cell_grid
+                    .current
+                    .set(x, y, Cell::new(initial_genotype, 0, 100));
             }
         }
     }
@@ -94,6 +99,62 @@ fn draw_plot_segment(fb: &mut [u32], x: usize, y0: usize, y1: usize, color: u32)
     }
 }
 
+// Función para exportar el caso clínico interactivo actual a CSV
+fn export_clinical_case(
+    pk_history: &[f64],
+    ca_history: &[usize],
+    genotype_history: &[[usize; 5]],
+    config: &OrganismConfig,
+    ab_idx: usize,
+    initial_g: u8,
+    regimen_label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    create_dir_all("data/interactive")?;
+    let ab = &config.antibiotics[ab_idx.min(config.antibiotics.len() - 1)];
+    let file_path = format!(
+        "data/interactive/caso_clinico_{}_{}_g{}.csv",
+        config.species.replace(' ', "_"),
+        ab.code,
+        initial_g
+    );
+    let mut writer = File::create(&file_path)?;
+
+    writeln!(
+        writer,
+        "minute,species,antibiotic,initial_genotype,regimen,plasma_conc_ug_ml,total_bacteria,g0,g1,g2,g3,g4"
+    )?;
+
+    for i in 0..pk_history.len() {
+        let counts = if i < genotype_history.len() {
+            genotype_history[i]
+        } else {
+            [0; 5]
+        };
+        writeln!(
+            writer,
+            "{},{},{},{},{},{:.4},{},{},{},{},{},{}",
+            i,
+            config.species,
+            ab.code,
+            initial_g,
+            regimen_label,
+            pk_history[i],
+            ca_history[i],
+            counts[0],
+            counts[1],
+            counts[2],
+            counts[3],
+            counts[4]
+        )?;
+    }
+
+    println!(
+        "¡Caso clínico interactivo exportado exitosamente a {}!",
+        file_path
+    );
+    Ok(())
+}
+
 fn main() {
     let mut window = Window::new(
         "Tesis RAM - Farmacocinetica Tisular In Vivo y Rebrote (Bateman / Hill)",
@@ -114,6 +175,7 @@ fn main() {
         "config/pseudomonas_pao1.toml",
     ];
     let mut current_cfg_idx = 0usize;
+    let mut initial_genotype = 0u8;
     let mut config: OrganismConfig = load_organism_config(config_files[current_cfg_idx])
         .expect("Error al leer archivo TOML en config/");
 
@@ -125,11 +187,16 @@ fn main() {
     let mut current_reg_idx = 0usize;
 
     let ab_init = &config.antibiotics[current_ab_idx];
-    let mut pk = BatemanRegimen::new(0.038, 0.0048, ab_init.c_max_plasma, regimens_tau[current_reg_idx]);
+    let mut pk = BatemanRegimen::new(
+        0.038,
+        0.0048,
+        ab_init.c_max_plasma,
+        regimens_tau[current_reg_idx],
+    );
 
     let diff_params = DiffusionParams {
-        diffusion_coeff: 0.50,
-        clearance_rate: 0.00018,
+        diffusion_coeff: 0.85,
+        clearance_rate: 0.00010,
         dx: 1.0,
         dt: 1.0,
     };
@@ -137,18 +204,39 @@ fn main() {
     let mut cell_grid = DoubleBufferGrid::new(WIDTH, HEIGHT, Cell::EMPTY);
     let mut drug_grid = DoubleBufferGrid::new(WIDTH, HEIGHT, 0.0);
 
-    init_infection(&mut cell_grid, &mut drug_grid, &capillaries, &mut rng);
+    init_infection(
+        &mut cell_grid,
+        &mut drug_grid,
+        &capillaries,
+        initial_genotype,
+        &mut rng,
+    );
 
     let mut tick = 0usize;
     let mut is_paused = false;
 
     let mut pk_history = Vec::with_capacity(500);
     let mut ca_history = Vec::with_capacity(500);
+    let mut genotype_history = Vec::with_capacity(500);
     let mut time_above_mic_count = 0usize;
     let mut total_monitored_ticks = 0usize;
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
         let mut reload_simulation = false;
+
+        if window.is_key_pressed(Key::E, minifb::KeyRepeat::No) {
+            if let Err(e) = export_clinical_case(
+                &pk_history,
+                &ca_history,
+                &genotype_history, // <--- ¡AQUÍ SE LO PASAS A LA FUNCIÓN DE EXPORTACIÓN!
+                &config,
+                current_ab_idx,
+                initial_genotype,
+                regimens_labels[current_reg_idx],
+            ) {
+                println!("Error al exportar caso clínico: {}", e);
+            }
+        }
 
         if window.is_key_pressed(Key::Key1, minifb::KeyRepeat::No) {
             current_cfg_idx = 0;
@@ -171,6 +259,11 @@ fn main() {
             reload_simulation = true;
         }
 
+        if window.is_key_pressed(Key::G, minifb::KeyRepeat::No) {
+            initial_genotype = (initial_genotype + 1) % 5;
+            reload_simulation = true;
+        }
+
         if window.is_key_pressed(Key::T, minifb::KeyRepeat::No) {
             current_reg_idx = (current_reg_idx + 1) % 3;
             reload_simulation = true;
@@ -189,10 +282,22 @@ fn main() {
         }
 
         if reload_simulation {
-            config = load_organism_config(config_files[current_cfg_idx]).expect("Error al recargar TOML");
+            config = load_organism_config(config_files[current_cfg_idx])
+                .expect("Error al recargar TOML");
             let ab_selected = &config.antibiotics[current_ab_idx.min(config.antibiotics.len() - 1)];
-            pk = BatemanRegimen::new(0.038, 0.0048, ab_selected.c_max_plasma, regimens_tau[current_reg_idx]);
-            init_infection(&mut cell_grid, &mut drug_grid, &capillaries, &mut rng);
+            pk = BatemanRegimen::new(
+                0.038,
+                0.0048,
+                ab_selected.c_max_plasma,
+                regimens_tau[current_reg_idx],
+            );
+            init_infection(
+                &mut cell_grid,
+                &mut drug_grid,
+                &capillaries,
+                initial_genotype,
+                &mut rng,
+            );
             pk_history.clear();
             ca_history.clear();
             time_above_mic_count = 0;
@@ -201,9 +306,11 @@ fn main() {
         }
 
         let ab = &config.antibiotics[current_ab_idx.min(config.antibiotics.len() - 1)];
-        let mic_s = ab.mic_genotypes[0];
-        let mpc_s = ab.mpc_genotypes[0];
+        let active_g = initial_genotype.min(4) as usize;
+        let mic_active = ab.mic_genotypes[active_g];
+        let mpc_active = ab.mpc_genotypes[active_g];
 
+        // Parámetros leídos estrictamente desde el archivo TOML
         let bio_params = BiophysicalParams {
             base_division_prob: config.kinetics.base_division_prob,
             fitness_cost_per_mutation: config.kinetics.fitness_cost_per_mutation,
@@ -223,15 +330,38 @@ fn main() {
         if !is_paused {
             let c_plasma = pk.concentration_at(tick);
 
-            if c_plasma >= mic_s {
+            if c_plasma >= mic_active {
                 time_above_mic_count += 1;
             }
             total_monitored_ticks += 1;
 
-            // Difusión desde capilares
-            step_diffusion_2d(&drug_grid.current, &mut drug_grid.next, &diff_params);
-            drug_grid.swap();
+            // Perfusión microvascular rápida (4 sub-pasos por minuto) acoplada a biofilm e hidrólisis
+            for _ in 0..4 {
+                for cap in &capillaries {
+                    for dy in -2..=2isize {
+                        for dx in -2..=2isize {
+                            if dx * dx + dy * dy <= 4 {
+                                let px = (cap.x as isize + dx) as usize;
+                                let py = (cap.y as isize + dy) as usize;
+                                if px < WIDTH && py < HEIGHT {
+                                    drug_grid.current.set(px, py, c_plasma);
+                                }
+                            }
+                        }
+                    }
+                }
 
+                step_diffusion_2d_biofilm(
+                    &drug_grid.current,
+                    &mut drug_grid.next,
+                    &cell_grid.current,
+                    &diff_params,
+                    ab.enzymatic_deg_rate,
+                );
+                drug_grid.swap();
+            }
+
+            // Re-fijar concentración en el lumen capilar tras el último swap
             for cap in &capillaries {
                 for dy in -2..=2isize {
                     for dx in -2..=2isize {
@@ -246,7 +376,7 @@ fn main() {
                 }
             }
 
-            // Actualización celular
+            // Actualización celular en el lecho tisular
             for y in TISSUE_Y..(TISSUE_Y + TISSUE_H) {
                 for x in TISSUE_X..(TISSUE_X + TISSUE_W) {
                     let is_vessel_core = capillaries.iter().any(|c| {
@@ -265,10 +395,15 @@ fn main() {
                     let density = cell_grid.current.chamfer_density_5_7(x, y);
 
                     if cell.is_alive() {
-                        let mut updated = update_living_cell(cell, local_c, density, false, &bio_params, 1.0, &mut rng);
-                        if updated.is_alive() {
-                            updated.add_resource(1);
-                        }
+                        let updated = update_living_cell(
+                            cell,
+                            local_c,
+                            density,
+                            false,
+                            &bio_params,
+                            1.0,
+                            &mut rng,
+                        );
                         cell_grid.next.set(x, y, updated);
                     } else {
                         let neighbors = cell_grid.current.get_living_neighbors(x, y);
@@ -305,9 +440,11 @@ fn main() {
         if !is_paused {
             pk_history.push(c_plasma_now);
             ca_history.push(total_bacteria);
+            genotype_history.push(counts);
             if pk_history.len() > 430 {
                 pk_history.remove(0);
                 ca_history.remove(0);
+                genotype_history.remove(0);
             }
         }
 
@@ -321,15 +458,30 @@ fn main() {
         fb.fill(0x0A1118);
 
         // Cabecera OSD
-        draw_text(&mut fb, WIDTH, 18, 12, "UNIVERSIDAD MAYOR DE SAN ANDRES - INFORMATICA : TESIS RAM", 0x38BDF8);
-        draw_text(&mut fb, WIDTH, 18, 28, "FARMACOCINETICA TISULAR IN VIVO: MODELO BATEMAN Y REBROTE RAM", 0xE2E8F0);
+        draw_text(
+            &mut fb,
+            WIDTH,
+            18,
+            12,
+            "UNIVERSIDAD MAYOR DE SAN ANDRES - INFORMATICA : TESIS RAM",
+            0x38BDF8,
+        );
+        draw_text(
+            &mut fb,
+            WIDTH,
+            18,
+            28,
+            "FARMACOCINETICA TISULAR IN VIVO: MODELO BATEMAN Y REBROTE RAM",
+            0xE2E8F0,
+        );
 
         let current_dose_num = ((tick / pk.tau_minutes) + 1).min(pk.total_doses);
         let status_str = format!(
-            "MIN: {:04} (Dia {:.1}) : {} : {}: {} : DOSIS: {}/{} : ADH: {:.0}%",
+            "MIN:{:04} (Dia {:.1}) | {} (g{}) | {}: {} | DOSIS:{}/{} | ADH:{:.0}%",
             tick,
             tick as f64 / 1440.0,
             config.species,
+            initial_genotype,
             ab.code,
             ab.name,
             current_dose_num,
@@ -342,7 +494,7 @@ fn main() {
             WIDTH,
             18,
             64,
-            "[O] Omitir/Tomar Prox   [A] Farmaco   [T] Pauta   [1..3] Cepa   [ESPACIO] Pausa   [R] Reset",
+            "[O] Omitir/Tomar  [A] Farmaco (1..8)  [G] Inoculo g0..g4  [T] Pauta  [1..3] Cepa  [ESPACIO] Pausa",
             0x94A3B8,
         );
 
@@ -376,7 +528,11 @@ fn main() {
 
             draw_rect(&mut fb, WIDTH, bx, by, box_w, box_h, bg_col);
             let num_str = format!("{:>2}", d + 1);
-            let txt_col = if is_next || is_past { 0xFFFFFF } else { 0x94A3B8 };
+            let txt_col = if is_next || is_past {
+                0xFFFFFF
+            } else {
+                0x94A3B8
+            };
             draw_text(&mut fb, WIDTH, bx + 5, by + 4, &num_str, txt_col);
         }
 
@@ -384,15 +540,36 @@ fn main() {
             let next_minute = n_idx * pk.tau_minutes;
             let mins_left = next_minute.saturating_sub(tick);
             let (label, col) = if pk.doses_taken[n_idx] {
-                (format!("Prox: D{} en {}m [TOMAR]", n_idx + 1, mins_left), 0x38BDF8)
+                (
+                    format!("Prox: D{} en {}m [TOMAR]", n_idx + 1, mins_left),
+                    0x38BDF8,
+                )
             } else {
-                (format!("Prox: D{} en {}m [OMITIDA!]", n_idx + 1, mins_left), 0xEF4444)
+                (
+                    format!("Prox: D{} en {}m [OMITIDA!]", n_idx + 1, mins_left),
+                    0xEF4444,
+                )
             };
-            draw_text(&mut fb, WIDTH, start_box_x + pk.total_doses * 30 + 12, 97, &label, col);
+            draw_text(
+                &mut fb,
+                WIDTH,
+                start_box_x + pk.total_doses * 30 + 12,
+                97,
+                &label,
+                col,
+            );
         }
 
         // Lecho Tisular
-        draw_rect(&mut fb, WIDTH, TISSUE_X - 1, TISSUE_Y - 1, TISSUE_W + 2, TISSUE_H + 2, 0x1E293B);
+        draw_rect(
+            &mut fb,
+            WIDTH,
+            TISSUE_X - 1,
+            TISSUE_Y - 1,
+            TISSUE_W + 2,
+            TISSUE_H + 2,
+            0x1E293B,
+        );
 
         for y in TISSUE_Y..(TISSUE_Y + TISSUE_H) {
             for x in TISSUE_X..(TISSUE_X + TISSUE_W) {
@@ -434,7 +611,14 @@ fn main() {
             }
         }
 
-        draw_text(&mut fb, WIDTH, TISSUE_X + 10, TISSUE_Y + TISSUE_H - 18, "LECHO VASCULAR TISULAR (64 CAPILARES)", 0xFFFFFF);
+        draw_text(
+            &mut fb,
+            WIDTH,
+            TISSUE_X + 10,
+            TISSUE_Y + TISSUE_H - 18,
+            "LECHO VASCULAR TISULAR (64 CAPILARES)",
+            0xFFFFFF,
+        );
 
         // Gráfica 1: Farmacocinética Bateman
         let gx = 515;
@@ -448,22 +632,44 @@ fn main() {
         draw_rect(&mut fb, WIDTH, gx, gy, 1, gh, 0x1E3A5F);
         draw_rect(&mut fb, WIDTH, gx + gw - 1, gy, 1, gh, 0x1E3A5F);
 
-        let title_pk = format!("FARMACOCINETICA C(t) [{}] C_act: {:.2} ug/mL", ab.code, c_plasma_now);
+        let line_type = if current_ab_idx >= 4 {
+            "RESCATE"
+        } else {
+            "1ra LINEA"
+        };
+        let title_pk = format!(
+            "PK C(t) [{} - {}] C_act: {:.2} ug/mL",
+            ab.code, line_type, c_plasma_now
+        );
         draw_text(&mut fb, WIDTH, gx + 15, gy + 12, &title_pk, 0x38BDF8);
 
-        let y_mic = log_pk_to_y(mic_s, gy, gh);
-        let y_mpc = log_pk_to_y(mpc_s, gy, gh);
+        let y_mic = log_pk_to_y(mic_active, gy, gh);
+        let y_mpc = log_pk_to_y(mpc_active, gy, gh);
 
-        // Líneas CMI y MPC
+        // Líneas CMI y MPC correspondientes al genotipo evaluado
         for sx in (gx + 1)..(gx + gw - 1) {
             fb[y_mic * WIDTH + sx] = 0xF59E0B;
             fb[y_mpc * WIDTH + sx] = 0xEF4444;
         }
 
-        let mic_label = format!("CMI: {:.3}", mic_s);
-        let mpc_label = format!("MPC: {:.3}", mpc_s);
-        draw_text(&mut fb, WIDTH, gx + gw - 82, y_mic - 9, &mic_label, 0xF59E0B);
-        draw_text(&mut fb, WIDTH, gx + gw - 82, y_mpc - 9, &mpc_label, 0xEF4444);
+        let mic_label = format!("CMI: {:.3}", mic_active);
+        let mpc_label = format!("MPC: {:.3}", mpc_active);
+        draw_text(
+            &mut fb,
+            WIDTH,
+            gx + gw - 88,
+            y_mic - 9,
+            &mic_label,
+            0xF59E0B,
+        );
+        draw_text(
+            &mut fb,
+            WIDTH,
+            gx + gw - 88,
+            y_mpc - 9,
+            &mpc_label,
+            0xEF4444,
+        );
 
         if pk_history.len() > 1 {
             for i in 1..pk_history.len() {
@@ -487,7 +693,14 @@ fn main() {
         draw_rect(&mut fb, WIDTH, gx, dy_g, 1, dh_g, 0x1E3A5F);
         draw_rect(&mut fb, WIDTH, gx + gw - 1, dy_g, 1, dh_g, 0x1E3A5F);
 
-        draw_text(&mut fb, WIDTH, gx + 15, dy_g + 12, "CARGA BACTERIANA INTERSTICIAL", 0xE2E8F0);
+        draw_text(
+            &mut fb,
+            WIDTH,
+            gx + 15,
+            dy_g + 12,
+            "CARGA BACTERIANA INTERSTICIAL",
+            0xE2E8F0,
+        );
 
         let max_pop = 160000.0;
         let plot_bot = dy_g + dh_g - 15;
@@ -503,7 +716,8 @@ fn main() {
                     let py0 = plot_bot - (n0 * (plot_bot - plot_top) as f64) as usize;
                     let py1 = plot_bot - (n1 * (plot_bot - plot_top) as f64) as usize;
 
-                    let pop_col = if counts[1] + counts[2] + counts[3] + counts[4] > counts[0] {
+                    let evolved_mutants: usize = ((active_g + 1)..5).map(|idx| counts[idx]).sum();
+                    let pop_col = if evolved_mutants > counts[active_g] {
                         0xEF4444
                     } else {
                         0x4ADE80
@@ -515,7 +729,10 @@ fn main() {
 
         // Panel de Estado y Diagnóstico Clínico
         let info_y = 512;
-        let pkpd_str = format!("INDICE PK/PD: %T>CMI = {:.1}% (Pauta: {})", pct_time_above_mic, regimens_labels[current_reg_idx]);
+        let pkpd_str = format!(
+            "INDICE PK/PD: %T>CMI = {:.1}% (Pauta: {})",
+            pct_time_above_mic, regimens_labels[current_reg_idx]
+        );
         draw_text(&mut fb, WIDTH, gx, info_y, &pkpd_str, 0x38BDF8);
 
         let pop_str = format!(
@@ -524,12 +741,16 @@ fn main() {
         );
         draw_text(&mut fb, WIDTH, gx, info_y + 18, &pop_str, 0xE2E8F0);
 
+        let evolved_mutants: usize = ((active_g + 1)..5).map(|idx| counts[idx]).sum();
         let diagnosis = if total_bacteria < 5000 {
             ("INFECCION CONTROLADA (CURACION CLINICA)", 0x4ADE80)
-        } else if counts[1] + counts[2] + counts[3] + counts[4] > counts[0] {
+        } else if evolved_mutants > counts[active_g] {
             ("FRACASO TERAPEUTICO: REBROTE POR SELECCION RAM", 0xEF4444)
         } else if pct_time_above_mic < 20.0 {
-            ("INEFICAZ: CONCENTRACION INSUFICIENTE (RESISTENCIA)", 0xEF4444)
+            (
+                "INEFICAZ: CONCENTRACION INSUFICIENTE (RESISTENCIA)",
+                0xEF4444,
+            )
         } else {
             ("CURSO CLINICO EN TRATAMIENTO", 0xF59E0B)
         };

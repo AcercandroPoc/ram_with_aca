@@ -30,5 +30,5 @@ pub use core::cell::Cell;
 pub use core::grid::{DoubleBufferGrid, Grid};
 pub use biology::rules::{BiophysicalParams, update_living_cell, try_colonize_empty_cell};
 pub use physics::bateman::BatemanRegimen;
-pub use physics::diffusion::{step_diffusion_2d, step_diffusion_mega_plate};
+pub use physics::diffusion::{step_diffusion_2d, step_diffusion_2d_biofilm, step_diffusion_mega_plate};
 pub use analysis::ode::{ChemostatState, LevinMonodParams, PearsonTracker};
