@@ -1,7 +1,7 @@
 //! src/bin/1_antibiograma.rs
 //! Simulador in vitro de Kirby-Bauer acoplado a perfiles fenotipicos TOML (CLSI / EUCAST).
 
-use minifb::{Key, Window, WindowOptions};
+use minifb::{Key, MouseButton, MouseMode, Window, WindowOptions};
 use rand::prelude::*;
 use rand_xoshiro::Xoshiro256PlusPlus;
 
@@ -9,7 +9,7 @@ use tesis_ram::biology::rules::{try_colonize_empty_cell, update_living_cell, Bio
 use tesis_ram::config::{load_organism_config, OrganismConfig};
 use tesis_ram::core::cell::Cell;
 use tesis_ram::core::grid::{DoubleBufferGrid, Grid};
-use tesis_ram::physics::diffusion::{step_diffusion_2d, DiffusionParams};
+use tesis_ram::physics::diffusion::{step_diffusion_2d_biofilm, DiffusionParams};
 use tesis_ram::visualizer::osd::{draw_rect, draw_text};
 
 const WIDTH: usize = 1000;
@@ -23,6 +23,7 @@ const DISK_RADIUS: usize = 14;  // 6 mm diametro (Papel de celulosa)
 
 const NUM_DISKS: usize = 4;
 const MM_PER_PIXEL: f64 = 90.0 / (2.0 * DISH_RADIUS as f64);
+const MAX_INCUBATION_TICKS: usize = 2880;
 
 #[derive(Clone, Copy)]
 struct DiskPosition {
@@ -44,6 +45,8 @@ fn init_petri_dish(
     drug_grids: &mut [DoubleBufferGrid<f64>; NUM_DISKS],
     disk_positions: &[DiskPosition; NUM_DISKS],
     config: &OrganismConfig,
+    panel_offset: usize,
+    initial_genotype: u8,
     rng: &mut Xoshiro256PlusPlus,
 ) {
     let r_sq = (DISH_RADIUS * DISH_RADIUS) as isize;
@@ -62,9 +65,8 @@ fn init_petri_dish(
             let dx = x as isize - DISH_CENTER_X as isize;
             let dy = y as isize - DISH_CENTER_Y as isize;
             if dx * dx + dy * dy <= r_sq {
-                // Inoculo inicial estandarizado: 30% de siembra que prolifera a confluencia
                 if rng.random_bool(0.30) {
-                    cell_grid.current.set(x, y, Cell::new(0, 0, 80));
+                    cell_grid.current.set(x, y, Cell::new(initial_genotype, 0, 80));
                 }
             }
         }
@@ -72,8 +74,9 @@ fn init_petri_dish(
 
     // Cargar discos de antibiotico con sus concentraciones
     for (d, pos) in disk_positions.iter().enumerate() {
-        if d < config.antibiotics.len() {
-            let ab = &config.antibiotics[d];
+        let ab_idx = panel_offset + d;
+        if ab_idx < config.antibiotics.len() {
+            let ab = &config.antibiotics[ab_idx];
             for dy in -(DISK_RADIUS as isize)..=(DISK_RADIUS as isize) {
                 for dx in -(DISK_RADIUS as isize)..=(DISK_RADIUS as isize) {
                     if dx * dx + dy * dy <= disk_r_sq {
@@ -130,12 +133,12 @@ fn measure_halo_diameter(cell_grid: &Grid<Cell>, disk_x: usize, disk_y: usize) -
 
 fn main() {
     let mut window = Window::new(
-        "Tesis RAM - Antibiograma Kirby-Bauer (CLSI M100 / EUCAST v14.0)",
+        "Tesis RAM - Antibiograma Kirby-Bauer (CLSI M100 / EUCAST v16.0)",
         WIDTH,
         HEIGHT,
         WindowOptions::default(),
     )
-    .expect("Fallo al inicializar minifb en WSL");
+    .expect("Fallo al inicializar minifb");
 
     window.set_target_fps(60);
 
@@ -148,6 +151,9 @@ fn main() {
         "config/pseudomonas_pao1.toml",
     ];
     let mut current_cfg_idx = 0usize;
+    let mut initial_genotype = 0u8;
+    let mut use_rescue_panel = false; // false = Panel 1ra Linea (0..3), true = Panel Rescate (4..7)
+    let mut mouse_was_down = false;
 
     let mut current_config = load_organism_config(config_files[current_cfg_idx])
         .expect("Error al leer archivo TOML en config/");
@@ -162,32 +168,77 @@ fn main() {
         DoubleBufferGrid::new(WIDTH, HEIGHT, 0.0),
     ];
 
-    init_petri_dish(&mut cell_grid, &mut drug_grids, &disk_positions, &current_config, &mut rng);
+    init_petri_dish(
+        &mut cell_grid,
+        &mut drug_grids,
+        &disk_positions,
+        &current_config,
+        0,
+        initial_genotype,
+        &mut rng,
+    );
 
     let mut tick = 0usize;
     let mut is_paused = false;
     let mut speed_multiplier = 1usize;
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
-        // --- Selector de Cepas TOML ---
         let mut reload = false;
         if window.is_key_pressed(Key::Key1, minifb::KeyRepeat::No) {
             current_cfg_idx = 0;
+            use_rescue_panel = false;
             reload = true;
         }
         if window.is_key_pressed(Key::Key2, minifb::KeyRepeat::No) {
             current_cfg_idx = 1;
+            use_rescue_panel = false;
             reload = true;
         }
         if window.is_key_pressed(Key::Key3, minifb::KeyRepeat::No) {
             current_cfg_idx = 2;
+            use_rescue_panel = false;
             reload = true;
         }
+        if window.is_key_pressed(Key::G, minifb::KeyRepeat::No) {
+            initial_genotype = (initial_genotype + 1) % 5;
+            reload = true;
+        }
+
+        // Detectar clic izquierdo del mouse dentro de la placa de Petri para alternar el Panel de Antibióticos
+        let mouse_down = window.get_mouse_down(MouseButton::Left);
+        if mouse_down && !mouse_was_down {
+            if let Some((mx, my)) = window.get_mouse_pos(MouseMode::Clamp) {
+                let dx = mx as isize - DISH_CENTER_X as isize;
+                let dy = my as isize - DISH_CENTER_Y as isize;
+                if dx * dx + dy * dy <= (DISH_RADIUS * DISH_RADIUS) as isize
+                    && current_config.antibiotics.len() >= 8
+                {
+                    use_rescue_panel = !use_rescue_panel;
+                    reload = true;
+                }
+            }
+        }
+        mouse_was_down = mouse_down;
+
+        let panel_offset = if use_rescue_panel && current_config.antibiotics.len() >= 8 {
+            4usize
+        } else {
+            0usize
+        };
 
         if reload {
             current_config = load_organism_config(config_files[current_cfg_idx])
                 .expect("Error al recargar TOML");
-            init_petri_dish(&mut cell_grid, &mut drug_grids, &disk_positions, &current_config, &mut rng);
+            let offset = if use_rescue_panel && current_config.antibiotics.len() >= 8 { 4 } else { 0 };
+            init_petri_dish(
+                &mut cell_grid,
+                &mut drug_grids,
+                &disk_positions,
+                &current_config,
+                offset,
+                initial_genotype,
+                &mut rng,
+            );
             tick = 0;
         }
 
@@ -195,7 +246,15 @@ fn main() {
             is_paused = !is_paused;
         }
         if window.is_key_pressed(Key::R, minifb::KeyRepeat::No) {
-            init_petri_dish(&mut cell_grid, &mut drug_grids, &disk_positions, &current_config, &mut rng);
+            init_petri_dish(
+                &mut cell_grid,
+                &mut drug_grids,
+                &disk_positions,
+                &current_config,
+                panel_offset,
+                initial_genotype,
+                &mut rng,
+            );
             tick = 0;
         }
         if window.is_key_pressed(Key::Equal, minifb::KeyRepeat::No) {
@@ -207,12 +266,36 @@ fn main() {
 
         let r_sq = (DISH_RADIUS * DISH_RADIUS) as isize;
         let disk_r_sq = (DISK_RADIUS * DISK_RADIUS) as isize;
+        let active_antibiotics = &current_config.antibiotics[panel_offset..(panel_offset + NUM_DISKS).min(current_config.antibiotics.len())];
+        let num_ab = active_antibiotics.len();
+
+        let mut bio_params_list = Vec::with_capacity(num_ab);
+        for ab in active_antibiotics {
+            bio_params_list.push(BiophysicalParams {
+                base_division_prob: current_config.kinetics.base_division_prob,
+                fitness_cost_per_mutation: current_config.kinetics.fitness_cost_per_mutation,
+                maintenance_cost: current_config.kinetics.maintenance_cost,
+                division_cost: current_config.kinetics.division_cost,
+                min_resource_for_division: current_config.kinetics.min_resource_for_division,
+                hill_e_max: ab.hill_e_max,
+                hill_coefficient: ab.hill_coefficient,
+                mic_by_genotype: ab.mic_genotypes,
+                mpc_by_genotype: ab.mpc_genotypes,
+                sos_base_mutation_prob: 0.0,
+                sos_max_induction_factor: 1.0,
+                sos_lethal_fraction: current_config.genetics.sos_lethal_fraction,
+            });
+        }
 
         // --- Simulacion Biofisica ---
-        if !is_paused {
+        if !is_paused && tick < MAX_INCUBATION_TICKS {
             for _ in 0..speed_multiplier {
-                // 1. Difusion de Fick continua independiente para cada farmaco
-                for (d, ab) in current_config.antibiotics.iter().enumerate().take(NUM_DISKS) {
+                if tick >= MAX_INCUBATION_TICKS {
+                    break;
+                }
+
+                // 1. Difusion radial isotropica independiente para cada sensidisco activo
+                for (d, ab) in active_antibiotics.iter().enumerate() {
                     let diff_params = DiffusionParams {
                         diffusion_coeff: ab.diffusion_coeff,
                         clearance_rate: ab.clearance_rate,
@@ -220,10 +303,15 @@ fn main() {
                         dt: 1.0,
                     };
 
-                    step_diffusion_2d(&drug_grids[d].current, &mut drug_grids[d].next, &diff_params);
+                    step_diffusion_2d_biofilm(
+                        &drug_grids[d].current,
+                        &mut drug_grids[d].next,
+                        &cell_grid.current,
+                        &diff_params,
+                        ab.enzymatic_deg_rate,
+                    );
                     drug_grids[d].swap();
 
-                    // Fuente continua en el sensidisco
                     let pos = &disk_positions[d];
                     for dy in -(DISK_RADIUS as isize)..=(DISK_RADIUS as isize) {
                         for dx in -(DISK_RADIUS as isize)..=(DISK_RADIUS as isize) {
@@ -236,7 +324,7 @@ fn main() {
                     }
                 }
 
-                // 2. Proliferacion e inhibicion celular en la placa
+                // 2. Proliferacion e inhibicion celular evaluando los 4 discos simultáneamente
                 for y in (DISH_CENTER_Y - DISH_RADIUS)..(DISH_CENTER_Y + DISH_RADIUS) {
                     for x in (DISH_CENTER_X - DISH_RADIUS)..(DISH_CENTER_X + DISH_RADIUS) {
                         let dx = x as isize - DISH_CENTER_X as isize;
@@ -245,69 +333,79 @@ fn main() {
                             continue;
                         }
 
-                        // Identificar el disco dominante por proximidad
+                        let mut on_disk = false;
                         let mut min_dist_sq = usize::MAX;
                         let mut closest_d = 0;
-                        for (d, pos) in disk_positions.iter().enumerate() {
-                            let ddx = (x as isize - pos.x as isize).abs() as usize;
-                            let ddy = (y as isize - pos.y as isize).abs() as usize;
+                        for (d, pos) in disk_positions.iter().enumerate().take(num_ab) {
+                            let ddx = (x as isize - pos.x as isize).unsigned_abs();
+                            let ddy = (y as isize - pos.y as isize).unsigned_abs();
                             let dist_sq = ddx * ddx + ddy * ddy;
+                            if dist_sq <= disk_r_sq as usize {
+                                on_disk = true;
+                                break;
+                            }
                             if dist_sq < min_dist_sq {
                                 min_dist_sq = dist_sq;
                                 closest_d = d;
                             }
                         }
 
-                        // Sobre el papel no crecen bacterias
-                        if min_dist_sq <= disk_r_sq as usize {
+                        if on_disk {
                             cell_grid.next.set(x, y, Cell::EMPTY);
                             continue;
                         }
-
-                        let ab = &current_config.antibiotics[closest_d];
-                        let local_conc = *drug_grids[closest_d].current.get(x, y);
-
-                        let bio_params = BiophysicalParams {
-                            base_division_prob: current_config.kinetics.base_division_prob,
-                            fitness_cost_per_mutation: current_config.kinetics.fitness_cost_per_mutation,
-                            maintenance_cost: current_config.kinetics.maintenance_cost,
-                            division_cost: current_config.kinetics.division_cost,
-                            min_resource_for_division: current_config.kinetics.min_resource_for_division,
-                            hill_e_max: ab.hill_e_max,
-                            hill_coefficient: ab.hill_coefficient,
-                            mic_by_genotype: ab.mic_genotypes,
-                            mpc_by_genotype: ab.mpc_genotypes,
-                            sos_base_mutation_prob: current_config.genetics.sos_base_mutation_prob,
-                            sos_max_induction_factor: current_config.genetics.sos_max_induction_factor,
-                            sos_lethal_fraction: current_config.genetics.sos_lethal_fraction,
-                        };
 
                         let cell = *cell_grid.current.get(x, y);
                         let density = cell_grid.current.chamfer_density_5_7(x, y);
 
                         if cell.is_alive() {
-                            let updated = update_living_cell(
-                                cell,
-                                local_conc,
-                                density,
-                                true, // Medio solido: quiescencia sin inanicion
-                                &bio_params,
-                                1.0,
-                                &mut rng,
-                            );
-                            cell_grid.next.set(x, y, updated);
+                            let mut current_c = cell;
+                            for d in 0..num_ab {
+                                let local_conc = *drug_grids[d].current.get(x, y);
+                                current_c = update_living_cell(
+                                    current_c,
+                                    local_conc,
+                                    density,
+                                    true,
+                                    &bio_params_list[d],
+                                    1.0,
+                                    &mut rng,
+                                );
+                                if !current_c.is_alive() {
+                                    break;
+                                }
+                            }
+                            cell_grid.next.set(x, y, current_c);
                         } else {
                             let neighbors = cell_grid.current.get_living_neighbors(x, y);
-                            let colonized = try_colonize_empty_cell(
+                            let candidate = try_colonize_empty_cell(
                                 x,
                                 y,
                                 density,
                                 &neighbors,
                                 &drug_grids[closest_d].current,
-                                &bio_params,
+                                &bio_params_list[closest_d],
                                 &mut rng,
                             );
-                            cell_grid.next.set(x, y, colonized);
+
+                            if candidate.is_alive() {
+                                let g_idx = candidate.genotype() as usize;
+                                let mut inhibited_by_other = false;
+                                for d in 0..num_ab {
+                                    let conc_d = *drug_grids[d].current.get(x, y);
+                                    if conc_d >= bio_params_list[d].mic_by_genotype[g_idx] {
+                                        inhibited_by_other = true;
+                                        break;
+                                    }
+                                }
+                                cell_grid.next.set(
+                                    x,
+                                    y,
+                                    if inhibited_by_other { Cell::EMPTY } else { candidate },
+                                );
+                            } else {
+                                cell_grid.next.set(x, y, Cell::EMPTY);
+                            }
                         }
                     }
                 }
@@ -318,7 +416,7 @@ fn main() {
 
         // --- Medicion de Halos de Inhibicion ---
         let mut halo_diams = [0.0; NUM_DISKS];
-        for d in 0..current_config.antibiotics.len().min(NUM_DISKS) {
+        for d in 0..num_ab {
             halo_diams[d] = measure_halo_diameter(&cell_grid.current, disk_positions[d].x, disk_positions[d].y);
         }
 
@@ -332,12 +430,15 @@ fn main() {
         draw_text(&mut fb, WIDTH, 20, 12, "UNIVERSIDAD MAYOR DE SAN ANDRES - INFORMATICA | TESIS RAM", 0x38BDF8);
         draw_text(&mut fb, WIDTH, 20, 28, "ANTIBIOGRAMA DE KIRBY-BAUER RADIAL DINAMICO (CLSI M100 / EUCAST)", 0xE2E8F0);
 
+        let panel_name = if use_rescue_panel { "RESCATE (2da)" } else { "PRIMARIO (1ra)" };
         let status_str = format!(
-            "TICK: {:05} | CEPA: {} | VELOCIDAD: {}x | {}",
+            "TICK:{:04}/{} | {} | INOCULO:g{} | PANEL:{} | VEL:{}x",
             tick,
-            current_config.name,
+            MAX_INCUBATION_TICKS,
+            current_config.species,
+            initial_genotype,
+            panel_name,
             speed_multiplier,
-            if is_paused { "PAUSADO" } else { "INCUBANDO" }
         );
         draw_text(&mut fb, WIDTH, 20, 46, &status_str, 0x4ADE80);
 
@@ -346,7 +447,7 @@ fn main() {
             WIDTH,
             20,
             64,
-            "[1] E. coli ATCC 25922  [2] K. pneumoniae BLEE  [3] P. aeruginosa  [ESPACIO] Pausa  [R] Reset",
+            "[1-3] Cepa  [G] Inoculo g0..g4  [CLICK EN PLACA] Panel Rescate  [ESPACIO] Pausa  [R] Reset",
             0x94A3B8,
         );
 
@@ -358,25 +459,22 @@ fn main() {
                     let px = (DISH_CENTER_X as isize + dx) as usize;
                     let py = (DISH_CENTER_Y as isize + dy) as usize;
 
-                    // Borde de la placa
                     if dist_sq >= (DISH_RADIUS as isize - 3).pow(2) {
-                        fb[py * WIDTH + px] = 0x64748B;
+                        fb[py * WIDTH + px] = if use_rescue_panel { 0x38BDF8 } else { 0x64748B };
                         continue;
                     }
 
                     let cell = cell_grid.current.get(px, py);
 
                     if cell.is_alive() {
-                        // Cesped bacteriano confluente (verde / crema)
                         fb[py * WIDTH + px] = match cell.genotype() {
-                            0 => 0x22C55E, // Verde: Salvaje
-                            1 => 0xEAB308, // Amarillo: g1
-                            2 => 0xF97316, // Naranja: g2
-                            3 => 0xEF4444, // Rojo: g3
-                            _ => 0xA855F7, // Purpura: g4
+                            0 => 0x22C55E,
+                            1 => 0xEAB308,
+                            2 => 0xF97316,
+                            3 => 0xEF4444,
+                            _ => 0xA855F7,
                         };
                     } else {
-                        // Agar Mueller-Hinton limpio y translucido (tono ambar calido)
                         let mut total_c = 0.0;
                         for d in 0..NUM_DISKS {
                             total_c += *drug_grids[d].current.get(px, py);
@@ -392,14 +490,14 @@ fn main() {
         }
 
         // Dibujar sensidiscos blancos con sus codigos
-        for (d, pos) in disk_positions.iter().enumerate().take(current_config.antibiotics.len().min(NUM_DISKS)) {
-            let ab = &current_config.antibiotics[d];
+        for (d, pos) in disk_positions.iter().enumerate().take(num_ab) {
+            let ab = &active_antibiotics[d];
             for dy in -(DISK_RADIUS as isize)..=(DISK_RADIUS as isize) {
                 for dx in -(DISK_RADIUS as isize)..=(DISK_RADIUS as isize) {
                     if dx * dx + dy * dy <= disk_r_sq {
                         let px = (pos.x as isize + dx) as usize;
                         let py = (pos.y as isize + dy) as usize;
-                        fb[py * WIDTH + px] = 0xF1F5F9; // Papel de celulosa
+                        fb[py * WIDTH + px] = 0xF1F5F9;
                     }
                 }
             }
@@ -408,7 +506,7 @@ fn main() {
             draw_text(&mut fb, WIDTH, pos.x - offset_x, pos.y - 4, label, 0x0F172A);
         }
 
-        // Panel de Informe EUCAST
+        // Panel de Informe EUCAST v16.0
         let px = 550;
         let py = 120;
         let pw = 425;
@@ -420,7 +518,12 @@ fn main() {
         draw_rect(&mut fb, WIDTH, px, py, 1, ph, 0x475569);
         draw_rect(&mut fb, WIDTH, px + pw, py, 1, ph + 1, 0x475569);
 
-        draw_text(&mut fb, WIDTH, px + 20, py + 16, "INFORME DE SUSCEPTIBILIDAD (EUCAST v14.0)", 0x38BDF8);
+        let header_title = if use_rescue_panel {
+            "INFORME EUCAST v16.0 [PANEL RESCATE OMS]"
+        } else {
+            "INFORME DE SUSCEPTIBILIDAD (EUCAST v16.0)"
+        };
+        draw_text(&mut fb, WIDTH, px + 20, py + 16, header_title, 0x38BDF8);
         draw_rect(&mut fb, WIDTH, px + 20, py + 34, pw - 40, 1, 0x334155);
 
         let col_y = py + 48;
@@ -430,16 +533,16 @@ fn main() {
         draw_text(&mut fb, WIDTH, px + 300, col_y, "CORTE", 0x94A3B8);
         draw_text(&mut fb, WIDTH, px + 370, col_y, "CAT", 0x94A3B8);
 
-        for (d, ab) in current_config.antibiotics.iter().enumerate().take(NUM_DISKS) {
+        for (d, ab) in active_antibiotics.iter().enumerate() {
             let row_y = col_y + 26 + d * 38;
             let diam = halo_diams[d];
 
             let (cat, cat_color, cat_bg) = if diam >= ab.breakpoint_s {
-                (" S ", 0x020617, 0x22C55E) // Sensible
+                (" S ", 0x020617, 0x22C55E)
             } else if diam >= ab.breakpoint_r {
-                (" I ", 0x020617, 0xF59E0B) // Intermedio
+                (" I ", 0x020617, 0xF59E0B)
             } else {
-                (" R ", 0xFFFFFF, 0xEF4444) // Resistente
+                (" R ", 0xFFFFFF, 0xEF4444)
             };
 
             draw_text(&mut fb, WIDTH, px + 20, row_y, &ab.code, 0xF8FAFC);
@@ -459,7 +562,6 @@ fn main() {
         draw_rect(&mut fb, WIDTH, px + 20, py + 225, pw - 40, 1, 0x334155);
         draw_text(&mut fb, WIDTH, px + 20, py + 238, "ANALISIS FARMACODINAMICO:", 0x38BDF8);
 
-        // Conteo del cesped
         let mut lawn_cells = 0;
         for dy in -(DISH_RADIUS as isize)..=(DISH_RADIUS as isize) {
             for dx in -(DISH_RADIUS as isize)..=(DISH_RADIUS as isize) {
@@ -492,7 +594,7 @@ fn main() {
         draw_text(&mut fb, WIDTH, px + 20, py + 358, "PARAMETROS METROLOGICOS:", 0x94A3B8);
         draw_text(&mut fb, WIDTH, px + 20, py + 376, "Diametro placa: 90 mm | Sensidisco: 6 mm", 0x64748B);
         draw_text(&mut fb, WIDTH, px + 20, py + 394, "Agar: Mueller-Hinton con difusion radial Fick", 0x64748B);
-        draw_text(&mut fb, WIDTH, px + 20, py + 412, "Criterio CFL: alpha <= 0.24 (Estabilidad 2D)", 0x64748B);
+        draw_text(&mut fb, WIDTH, px + 20, py + 412, "Criterio CFL: alpha <= 0.24 (Estencil Isotropico 9p)", 0x64748B);
 
         window.update_with_buffer(&fb, WIDTH, HEIGHT).unwrap();
     }
