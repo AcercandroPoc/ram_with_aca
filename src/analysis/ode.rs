@@ -1,9 +1,28 @@
 //! src/analysis/ode.rs
 //! Modelo continuo de campo medio isomórfico al Autómata Celular (Levin-Regoes).
 
+#[derive(Clone, Copy, Debug)]
+pub struct ChemostatState {
+    pub s: f64,   // Parámetro de compatibilidad
+    pub n_s: f64, // Células sensibles
+    pub n_r: f64, // Células resistentes
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct MultiClonalState {
+    pub n: [f64; 5],
+}
+
+impl MultiClonalState {
+    #[inline]
+    pub fn total(&self) -> f64 {
+        self.n[0] + self.n[1] + self.n[2] + self.n[3] + self.n[4]
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct LevinMonodParams {
-    pub carrying_capacity: f64, // K = 30,490 (Celdas del reactor cilíndrico)
+    pub carrying_capacity: f64,
     pub growth_rate_s: f64,     // r_s basal
     pub growth_rate_r: f64,     // r_r con coste metabólico
     pub dilution_d: f64,        // Tasa de lavado D
@@ -14,77 +33,199 @@ pub struct LevinMonodParams {
     pub mu_sos: f64,            // Flujo mutacional S -> R
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct ChemostatState {
-    pub s: f64,   // Parámetro de compatibilidad
-    pub n_s: f64, // Células sensibles
-    pub n_r: f64, // Células resistentes
-}
-
-impl LevinMonodParams {
-    pub fn derivatives(&self, state: &ChemostatState, antibiotic_conc: f64) -> [f64; 3] {
-        let n_s = state.n_s.max(0.0);
-        let n_r = state.n_r.max(0.0);
-        let n_tot = n_s + n_r;
-
-        // Factor logístico espacial idéntico a la saturación Chamfer del retículo
-        let space_factor = (1.0 - n_tot / self.carrying_capacity).max(0.0);
-
-        let kill_s = if antibiotic_conc >= self.mic_s {
-            self.e_max * antibiotic_conc.powf(self.hill_h)
-                / (self.mic_s.powf(self.hill_h) + antibiotic_conc.powf(self.hill_h))
-        } else {
-            0.0
-        };
-
-        let kill_r = if antibiotic_conc >= self.mic_r {
-            self.e_max * antibiotic_conc.powf(self.hill_h)
-                / (self.mic_r.powf(self.hill_h) + antibiotic_conc.powf(self.hill_h))
-        } else {
-            0.0
-        };
-
-        let dns = n_s * (self.growth_rate_s * space_factor - self.dilution_d - kill_s - self.mu_sos);
-        let dnr = n_r * (self.growth_rate_r * space_factor - self.dilution_d - kill_r) + self.mu_sos * n_s;
-
-        [0.0, dns, dnr]
-    }
-
-    pub fn rk4_step(&self, state: &ChemostatState, antibiotic_conc: f64, dt: f64) -> ChemostatState {
-        let k1 = self.derivatives(state, antibiotic_conc);
-
-        let s1 = ChemostatState {
-            s: 0.0,
-            n_s: state.n_s + 0.5 * dt * k1[1],
-            n_r: state.n_r + 0.5 * dt * k1[2],
-        };
-        let k2 = self.derivatives(&s1, antibiotic_conc);
-
-        let s2 = ChemostatState {
-            s: 0.0,
-            n_s: state.n_s + 0.5 * dt * k2[1],
-            n_r: state.n_r + 0.5 * dt * k2[2],
-        };
-        let k3 = self.derivatives(&s2, antibiotic_conc);
-
-        let s3 = ChemostatState {
-            s: 0.0,
-            n_s: state.n_s + dt * k3[1],
-            n_r: state.n_r + dt * k3[2],
-        };
-        let k4 = self.derivatives(&s3, antibiotic_conc);
-
-        ChemostatState {
-            s: 0.0,
-            n_s: (state.n_s + (dt / 6.0) * (k1[1] + 2.0 * k2[1] + 2.0 * k3[1] + k4[1])).max(0.0),
-            n_r: (state.n_r + (dt / 6.0) * (k1[2] + 2.0 * k2[2] + 2.0 * k3[2] + k4[2])).max(0.0),
+impl Default for LevinMonodParams {
+    fn default() -> Self {
+        Self {
+            carrying_capacity: 22200.0,
+            growth_rate_s: 0.145,
+            growth_rate_r: 0.1334,
+            dilution_d: 0.015,
+            e_max: 0.35,
+            mic_s: 0.035,
+            mic_r: 0.200,
+            hill_h: 2.0,
+            mu_sos: 0.0035,
         }
     }
 }
 
+impl LevinMonodParams {
+    #[inline]
+    fn hill_kill(&self, c: f64, mic: f64) -> f64 {
+        if c < mic {
+            return 0.0;
+        }
+        let ch = c.powf(self.hill_h);
+        let mh = mic.powf(self.hill_h);
+        self.e_max * (ch / (mh + ch))
+    }
+
+    pub fn derivatives(&self, state: &ChemostatState, c: f64) -> ChemostatState {
+        let total_n = state.n_s + state.n_r;
+        let logistic = (1.0 - (total_n / self.carrying_capacity)).max(0.0);
+
+        let phi_s = if c < self.mic_s {
+            self.growth_rate_s * logistic
+        } else {
+            0.0
+        };
+        let phi_r = if c < self.mic_r {
+            self.growth_rate_r * logistic
+        } else {
+            0.0
+        };
+
+        let kill_s = self.hill_kill(c, self.mic_s);
+        let kill_r = self.hill_kill(c, self.mic_r);
+
+        // En el CA existe mutación espontánea basal (sos_base_mutation_prob * (1 - lethal) = 0.001)
+        // que se amplifica bajo inducción SOS dentro de la MSW [CMI_s, MPC_s].
+        let mu = if c >= self.mic_s && c < self.mic_r * 1.4 {
+            self.mu_sos
+        } else {
+            0.0008 * logistic
+        };
+
+        let dn_s = (phi_s - kill_s - self.dilution_d) * state.n_s - mu * state.n_s;
+        let dn_r = (phi_r - kill_r - self.dilution_d) * state.n_r + mu * state.n_s;
+
+        ChemostatState {
+            s: 0.0,
+            n_s: dn_s,
+            n_r: dn_r,
+        }
+    }
+
+    pub fn rk4_step(&self, state: &ChemostatState, c: f64, dt: f64) -> ChemostatState {
+        let k1 = self.derivatives(state, c);
+
+        let s2 = ChemostatState {
+            s: 0.0,
+            n_s: (state.n_s + 0.5 * dt * k1.n_s).max(0.0),
+            n_r: (state.n_r + 0.5 * dt * k1.n_r).max(0.0),
+        };
+        let k2 = self.derivatives(&s2, c);
+
+        let s3 = ChemostatState {
+            s: 0.0,
+            n_s: (state.n_s + 0.5 * dt * k2.n_s).max(0.0),
+            n_r: (state.n_r + 0.5 * dt * k2.n_r).max(0.0),
+        };
+        let k3 = self.derivatives(&s3, c);
+
+        let s4 = ChemostatState {
+            s: 0.0,
+            n_s: (state.n_s + dt * k3.n_s).max(0.0),
+            n_r: (state.n_r + dt * k3.n_r).max(0.0),
+        };
+        let k4 = self.derivatives(&s4, c);
+
+        ChemostatState {
+            s: 0.0,
+            n_s: (state.n_s + (dt / 6.0) * (k1.n_s + 2.0 * k2.n_s + 2.0 * k3.n_s + k4.n_s)).max(0.0),
+            n_r: (state.n_r + (dt / 6.0) * (k1.n_r + 2.0 * k2.n_r + 2.0 * k3.n_r + k4.n_r)).max(0.0),
+        }
+    }
+
+    /// Derivadas del sistema multiclonal (g0..g4) acopladas al protocolo Morbidostat
+    pub fn derivatives_multiclonal(
+        &self,
+        state: &MultiClonalState,
+        c: f64,
+        mics: &[f64; 5],
+        mpcs: &[f64; 5],
+        fitness_cost: f64,
+    ) -> MultiClonalState {
+        let total_n = state.total();
+        let logistic = (1.0 - (total_n / self.carrying_capacity)).max(0.0);
+        let mut dn = [0.0f64; 5];
+
+        for g in 0..5 {
+            let fitness = (1.0 - fitness_cost * (g as f64)).max(0.1);
+            let r_g = self.growth_rate_s * fitness;
+            let phi_g = if c < mics[g] { r_g * logistic } else { 0.0 };
+            let kill_g = self.hill_kill(c, mics[g]);
+
+            let mu_out = if g < 4 {
+                if c >= mics[g] && c < mpcs[g] {
+                    self.mu_sos
+                } else if c < mics[g] {
+                    0.0008 * logistic
+                } else {
+                    0.0
+                }
+            } else {
+                0.0
+            };
+
+            let mut_in = if g > 0 {
+                let g_prev = g - 1;
+                let mu_prev = if c >= mics[g_prev] && c < mpcs[g_prev] {
+                    self.mu_sos
+                } else if c < mics[g_prev] {
+                    0.0008 * logistic
+                } else {
+                    0.0
+                };
+                mu_prev * state.n[g_prev]
+            } else {
+                0.0
+            };
+
+            dn[g] = (phi_g - kill_g - self.dilution_d - mu_out) * state.n[g] + mut_in;
+        }
+
+        MultiClonalState { n: dn }
+    }
+
+    /// Paso Runge-Kutta 4 (RK4) para las 5 subpoblaciones clonales (g0..g4)
+    pub fn rk4_step_multiclonal(
+        &self,
+        state: &MultiClonalState,
+        c: f64,
+        mics: &[f64; 5],
+        mpcs: &[f64; 5],
+        fitness_cost: f64,
+        dt: f64,
+    ) -> MultiClonalState {
+        let k1 = self.derivatives_multiclonal(state, c, mics, mpcs, fitness_cost);
+
+        let mut s2 = MultiClonalState { n: [0.0; 5] };
+        for i in 0..5 {
+            s2.n[i] = (state.n[i] + 0.5 * dt * k1.n[i]).max(0.0);
+        }
+        let k2 = self.derivatives_multiclonal(&s2, c, mics, mpcs, fitness_cost);
+
+        let mut s3 = MultiClonalState { n: [0.0; 5] };
+        for i in 0..5 {
+            s3.n[i] = (state.n[i] + 0.5 * dt * k2.n[i]).max(0.0);
+        }
+        let k3 = self.derivatives_multiclonal(&s3, c, mics, mpcs, fitness_cost);
+
+        let mut s4 = MultiClonalState { n: [0.0; 5] };
+        for i in 0..5 {
+            s4.n[i] = (state.n[i] + dt * k3.n[i]).max(0.0);
+        }
+        let k4 = self.derivatives_multiclonal(&s4, c, mics, mpcs, fitness_cost);
+
+        let mut next = MultiClonalState { n: [0.0; 5] };
+        for i in 0..5 {
+            next.n[i] = (state.n[i]
+                + (dt / 6.0) * (k1.n[i] + 2.0 * k2.n[i] + 2.0 * k3.n[i] + k4.n[i]))
+                .max(0.0);
+        }
+        next
+    }
+}
+
 pub struct PearsonTracker {
-    x_history: Vec<f64>,
-    y_history: Vec<f64>,
+    pub n: f64,
+    pub sum_x: f64,
+    pub sum_y: f64,
+    pub sum_xy: f64,
+    pub sum_x2: f64,
+    pub sum_y2: f64,
+    pub sum_sq_err: f64,
 }
 
 impl Default for PearsonTracker {
@@ -96,42 +237,55 @@ impl Default for PearsonTracker {
 impl PearsonTracker {
     pub fn new() -> Self {
         Self {
-            x_history: Vec::with_capacity(10000),
-            y_history: Vec::with_capacity(10000),
+            n: 0.0,
+            sum_x: 0.0,
+            sum_y: 0.0,
+            sum_xy: 0.0,
+            sum_x2: 0.0,
+            sum_y2: 0.0,
+            sum_sq_err: 0.0,
         }
     }
 
     pub fn record(&mut self, x: f64, y: f64) {
-        self.x_history.push(x);
-        self.y_history.push(y);
+        self.n += 1.0;
+        self.sum_x += x;
+        self.sum_y += y;
+        self.sum_xy += x * y;
+        self.sum_x2 += x * x;
+        self.sum_y2 += y * y;
+        let diff = x - y;
+        self.sum_sq_err += diff * diff;
     }
 
-    /// Evalúa la correlación de Pearson a lo largo de toda la trayectoria histórica transitoria
     pub fn calculate(&self) -> f64 {
-        let n = self.x_history.len();
-        if n < 15 {
+        if self.n < 2.0 {
             return 1.0;
         }
-
-        let mean_x = self.x_history.iter().sum::<f64>() / n as f64;
-        let mean_y = self.y_history.iter().sum::<f64>() / n as f64;
-
-        let mut cov = 0.0;
-        let mut var_x = 0.0;
-        let mut var_y = 0.0;
-
-        for (xi, yi) in self.x_history.iter().zip(self.y_history.iter()) {
-            let dx = xi - mean_x;
-            let dy = yi - mean_y;
-            cov += dx * dy;
-            var_x += dx * dx;
-            var_y += dy * dy;
+        let num = self.n * self.sum_xy - self.sum_x * self.sum_y;
+        let den_x = self.n * self.sum_x2 - self.sum_x * self.sum_x;
+        let den_y = self.n * self.sum_y2 - self.sum_y * self.sum_y;
+        let den = (den_x * den_y).sqrt();
+        if den <= 1e-12 {
+            1.0
+        } else {
+            (num / den).clamp(-1.0, 1.0)
         }
+    }
 
-        if var_x <= 1e-6 || var_y <= 1e-6 {
-            return 1.0;
+    pub fn rmse(&self) -> f64 {
+        if self.n < 1.0 {
+            0.0
+        } else {
+            (self.sum_sq_err / self.n).sqrt()
         }
+    }
 
-        cov / (var_x.sqrt() * var_y.sqrt())
+    pub fn nrmse(&self, scale: f64) -> f64 {
+        if scale <= 1e-12 {
+            0.0
+        } else {
+            self.rmse() / scale
+        }
     }
 }
