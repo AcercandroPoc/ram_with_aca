@@ -110,7 +110,7 @@ breakpoint_r = 18.0
 [[antibiotics]]
 code = "TGC"
 name = "Tigeciclina"
-lead_ug = 15.0
+load_ug = 15.0
 c_max_plasma = 1.5
 diffusion_coeff = 0.20
 clearance_rate = 0.0001
